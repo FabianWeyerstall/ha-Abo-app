@@ -39,3 +39,7 @@ pytest
 ```
 
 Die Berechnung (`engine.py`) und die Zugriffsregeln (`store.py`) haben keine Abhängigkeit zu Home Assistant. Das Panel ist eine einzelne JavaScript-Datei ohne Build-Schritt (`frontend/haushaltsbuch-panel.js`).
+
+## Neue Version veröffentlichen
+
+Version in `custom_components/haushaltsbuch/manifest.json` und `const.py` erhöhen und nach `main` mergen. Der Workflow „Release“ legt dann automatisch das GitHub-Release `vX.Y.Z` an, und HACS bietet das Update an.
