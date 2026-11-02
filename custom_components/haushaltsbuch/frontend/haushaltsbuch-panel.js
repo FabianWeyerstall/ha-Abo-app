@@ -107,6 +107,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
     this.shadowRoot.addEventListener("submit", (ev) => this._onSubmit(ev));
+    this.shadowRoot.addEventListener("input", (ev) => {
+      if (ev.target.name !== "icon") return;
+      const preview = ev.target.closest("label")?.querySelector(".icon-preview");
+      if (preview) preview.innerHTML = this._icon(ev.target.value.trim(), 20);
+    });
   }
 
   set hass(hass) {
@@ -527,7 +532,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label>Betrag (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
         <label>Kategorie<input name="category" list="categories" required value="${esc(item.category || "")}" ${dis}>
           <datalist id="categories">${this._state.categories.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
-        <label>Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" placeholder="mdi:netflix oder Emoji" value="${esc(item.icon || "")}" ${dis}></label>
+        <label>Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="mdi:netflix oder Emoji" value="${esc(item.icon || "")}" ${dis}></label>
         <label>Turnus<select name="preset" data-change="preset" ${dis}>
           ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p.label}</option>`).join("")}
         </select></label>
