@@ -131,3 +131,20 @@ def _item(today: date) -> dict:
         "start_date": today.isoformat(),
         "schedule": {"frequency": "monthly", "interval": 1},
     }
+
+
+async def test_websocket_export_import(hass: HomeAssistant, hass_ws_client) -> None:
+    await _setup(hass)
+    client = await hass_ws_client(hass)
+    today = date.today()
+    await client.send_json_auto_id({"type": f"{DOMAIN}/item/save", "item": _item(today)})
+    assert (await client.receive_json())["success"]
+    await client.send_json_auto_id({"type": f"{DOMAIN}/export"})
+    exported = (await client.receive_json())["result"]
+    assert len(exported["items"]) == 1
+    await client.send_json_auto_id({"type": f"{DOMAIN}/import", "data": exported})
+    res = await client.receive_json()
+    assert res["success"] and res["result"] == {"added": 0, "skipped": 1}
+    await client.send_json_auto_id({"type": f"{DOMAIN}/import", "data": {"format": "x"}})
+    res = await client.receive_json()
+    assert not res["success"] and res["error"]["code"] == "invalid_format"

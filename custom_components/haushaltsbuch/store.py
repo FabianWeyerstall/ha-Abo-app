@@ -49,6 +49,9 @@ def empty_data() -> dict[str, Any]:
     return {"users": {}, "items": {}, "households": {}}
 
 
+EXPORT_FORMAT = "haushaltsbuch"
+EXPORT_VERSION = 1
+
 ITEM_FIELDS = {
     "name",
     "direction",
@@ -274,6 +277,120 @@ class Book:
         overrides.sort(key=lambda o: o["due_date"])
         # Planned appointments far in the past are no longer needed.
         item["overrides"] = overrides[-36:]
+
+
+    # -------------------------------------------------------- export/import
+    def export_items(self, user_id: str) -> dict[str, Any]:
+        """The user's own items as a portable document (no ids, no households)."""
+        user = self.user(user_id)
+        items = []
+        for item in sorted(self.own_items(user_id), key=lambda i: i["name"].lower()):
+            entry = {k: item.get(k) for k in ITEM_FIELDS if k != "household_id"}
+            entry["confirmations"] = [
+                {k: c.get(k) for k in ("due_date", "status", "actual_date", "actual_amount")}
+                for c in item.get("confirmations", [])
+            ]
+            entry["overrides"] = [
+                {k: o.get(k) for k in ("due_date", "date", "amount")}
+                for o in item.get("overrides", [])
+            ]
+            items.append(entry)
+        return {
+            "format": EXPORT_FORMAT,
+            "version": EXPORT_VERSION,
+            "exported_at": date.today().isoformat(),
+            "balance": user["balance"],
+            "balance_date": user["balance_date"],
+            "items": items,
+        }
+
+    def import_items(
+        self, user_id: str, document: dict[str, Any], replace: bool = False
+    ) -> dict[str, int]:
+        """Add the items of an export as private items of this user.
+
+        Everything is validated before anything changes. With ``replace`` the
+        user's own items are removed first; otherwise items that already exist
+        with the same name, direction, amount and start date are skipped.
+        """
+        if not isinstance(document, dict) or document.get("format") != EXPORT_FORMAT:
+            raise ValidationError("file_format")
+        raw_items = document.get("items")
+        if not isinstance(raw_items, list):
+            raise ValidationError("items")
+        prepared = []
+        for number, raw in enumerate(raw_items, start=1):
+            if not isinstance(raw, dict):
+                raise ValidationError(f"item {number}")
+            try:
+                cleaned = _validate_item({**raw, "household_id": None})
+                cleaned["confirmations"] = _clean_confirmations(raw.get("confirmations"))
+                cleaned["overrides"] = _clean_overrides(raw.get("overrides"))
+            except ValidationError as err:
+                raise ValidationError(f"{raw.get('name') or number}: {err}") from err
+            prepared.append(cleaned)
+
+        if replace:
+            for item in self.own_items(user_id):
+                del self.data["items"][item["id"]]
+        existing = {_identity(i) for i in self.own_items(user_id)}
+        added = skipped = 0
+        for cleaned in prepared:
+            if _identity(cleaned) in existing:
+                skipped += 1
+                continue
+            item_id = uuid4().hex
+            self.data["items"][item_id] = {"id": item_id, "owner": user_id, **cleaned}
+            existing.add(_identity(cleaned))
+            added += 1
+
+        balance, balance_date = document.get("balance"), document.get("balance_date")
+        if replace and balance is not None and balance_date:
+            try:
+                self.set_user_balance(user_id, float(balance), balance_date)
+            except (TypeError, ValueError, ValidationError):
+                pass
+        return {"added": added, "skipped": skipped}
+
+
+def _identity(item: dict[str, Any]) -> tuple:
+    return (item["name"].lower(), item["direction"], round(float(item["amount"]), 2), item["start_date"])
+
+
+def _clean_confirmations(values: Any) -> list[dict[str, Any]]:
+    result = []
+    for c in values or []:
+        if not isinstance(c, dict):
+            raise ValidationError("confirmations")
+        _check_date(c.get("due_date"), "confirmations")
+        if c.get("status") not in (STATUS_BOOKED, STATUS_SKIPPED):
+            raise ValidationError("confirmations")
+        if c.get("actual_date"):
+            _check_date(c["actual_date"], "confirmations")
+        try:
+            amount = None if c.get("actual_amount") is None else abs(float(c["actual_amount"]))
+        except (TypeError, ValueError) as err:
+            raise ValidationError("confirmations") from err
+        result.append(
+            {"due_date": c["due_date"], "status": c["status"],
+             "actual_date": c.get("actual_date") or None, "actual_amount": amount}
+        )
+    return sorted(result, key=lambda c: c["due_date"])[-24:]
+
+
+def _clean_overrides(values: Any) -> list[dict[str, Any]]:
+    result = []
+    for o in values or []:
+        if not isinstance(o, dict):
+            raise ValidationError("overrides")
+        _check_date(o.get("due_date"), "overrides")
+        _check_date(o.get("date"), "overrides")
+        try:
+            amount = None if o.get("amount") is None else abs(float(o["amount"]))
+        except (TypeError, ValueError) as err:
+            raise ValidationError("overrides") from err
+        result.append({"due_date": o["due_date"], "date": o["date"], "amount": amount})
+    return sorted(result, key=lambda o: o["due_date"])[-36:]
 
 
 def _check_date(value: Any, field: str) -> None:
