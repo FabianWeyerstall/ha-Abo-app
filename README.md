@@ -10,10 +10,15 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Kalender** als Monatsansicht mit allen Fälligkeiten
 - **Posten** mit Name, Betrag, Kategorie, Symbol und Turnus: einmalig, wöchentlich, monatlich, vierteljährlich, halbjährlich, jährlich, alle X Monate, feste Termine im Jahr oder **gleitend** (der nächste Termin richtet sich nach dem letzten, z.B. Friseur)
 - **Sicherheitsstufe** pro Buchung: *sicher*, *wahrscheinlich* oder *unsicher*. Sie ergibt sich aus Schwankung von Betrag und Datum und daraus, ob die letzten Buchungen pünktlich bestätigt wurden. Pro Posten auch fest einstellbar.
+- **Preisänderungen**: neuer Betrag ab einem Datum, frühere Buchungen behalten den alten Betrag
+- **Verträge**: Laufzeit, Kündigungsfrist und automatische Verlängerung. Die Zeitleiste zeigt rechtzeitig, bis wann du kündigen musst.
+- **Budgets** für variable Ausgaben wie Lebensmittel oder Freizeit: ein Monatsbetrag, der gleichmäßig über den Monat vom erwarteten Kontostand abgeht
+- **Gleitende Posten lernen** ab drei bestätigten Terminen den echten durchschnittlichen Abstand
 - **Termin festlegen**: Datum und Betrag einer einzelnen Buchung festlegen. Bei gleitenden Posten rücken alle weiteren Termine nach, sonst wird nur diese eine Buchung verschoben.
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
-- **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat hervorgehoben
+- **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat hervorgehoben. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
+- **Suche** in den Posten und **alle offenen Buchungen auf einmal bestätigen**
 - **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Prime, Disney+, Gehalt, Tanken, Räderwechsel …)
 - **Export und Import** der eigenen Posten als JSON-Datei, z.B. als Sicherung oder zum Umzug auf eine andere HA-Instanz. Beim Import wählbar: hinzufügen (Doppelte werden übersprungen) oder ersetzen
 
@@ -42,14 +47,23 @@ Tab **Posten** → **+ Neuer Posten**.
    - *feste Termine im Jahr*: mehrere Daten pro Jahr, z.B. Räderwechsel im April und Oktober
    - *gleitend*: der nächste Termin richtet sich nach dem letzten, z.B. Friseur oder Tanken
    - *einmalig*: z.B. Bonus oder eine Rechnung
+   - *Budget pro Monat*: für Ausgaben ohne feste Termine, z.B. Lebensmittel. Keine einzelnen Buchungen, das Budget wird gleichmäßig über den Monat verteilt.
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
 5. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
 
 Das **Symbol** ist eine MDI-Bezeichnung wie `mdi:netflix` (Übersicht auf [pictogrammers.com](https://pictogrammers.com/library/mdi/)) oder einfach ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
 
+### Preisänderung eintragen
+
+Posten öffnen → **Preisänderungen** → **+ Preisänderung**, Datum und neuen Betrag eintragen. Ab diesem Tag rechnet die App mit dem neuen Betrag, alles davor bleibt beim alten. In der Postenliste steht eine kommende Änderung klein unter dem Betrag.
+
+### Vertrag und Kündigungsfrist
+
+Posten öffnen → **Vertrag und Kündigung** → Häkchen **Vertragslaufzeit erfassen**. Eintragen, bis wann der Vertrag läuft, die Kündigungsfrist und um wie viele Monate er sich danach verlängert (0 = endet einfach). Die App rechnet das nächste Vertragsende selbst weiter. Muss in den nächsten 60 Tagen gekündigt werden, erscheint der Vertrag in der Zeitleiste unter **Kündigungsfristen**, in der Postenliste steht „kündbar bis …“.
+
 ### 3. Buchungen bestätigen
 
-Was in den letzten drei Wochen fällig war, steht in der Zeitleiste unter **Zu bestätigen**. Tippe auf **gebucht** oder **ausgefallen**. Wer eine Buchung antippt, kann auch das echte Datum und den echten Betrag eintragen. Pünktlich bestätigte Posten werden mit der Zeit *sicher*.
+Was in den letzten drei Wochen fällig war, steht in der Zeitleiste unter **Zu bestätigen**. Tippe auf **gebucht** oder **ausgefallen**, oder bestätige mit **Alle … gebucht** alles auf einmal. Wer eine Buchung antippt, kann auch das echte Datum und den echten Betrag eintragen. Pünktlich bestätigte Posten werden mit der Zeit *sicher*.
 
 ### 4. Termin festlegen
 
@@ -63,15 +77,16 @@ Tanken ist unregelmäßig, deshalb am besten **gleitend** und **pro Auto ein Pos
 2. Namen anpassen, z.B. „Tanken Golf“, und einen typischen Betrag pro Tankfüllung eintragen
 3. Tankst du ungefähr einmal im Monat, den Abstand auf 4 Wochen oder 1 Monat stellen
 4. Nach dem Tanken die Buchung als **gebucht** bestätigen, gern mit echtem Datum und Betrag. Die nächste Tankfüllung wird dann ab diesem Tag neu berechnet.
+5. Ab drei bestätigten Tankfüllungen lernt die App deinen echten Abstand (abschaltbar im Posten: „Abstand aus bestätigten Terminen lernen“).
 
-Wer das Tanken nicht einzeln pflegen will, legt stattdessen einen monatlichen Posten „Tanken“ mit dem durchschnittlichen Monatsbetrag an.
+Wer das Tanken nicht einzeln pflegen will, legt stattdessen ein **Budget pro Monat** „Tanken“ mit dem durchschnittlichen Monatsbetrag an.
 
 ### 5. Ansichten
 
 - **Zeitleiste**: alle Buchungen der nächsten 7, 30 oder 90 Tage mit erwartetem Kontostand. Zwei Linien: nur sichere Buchungen sowie sichere und wahrscheinliche zusammen.
 - **Kalender**: Monatsansicht, ein Tag antippen zeigt seine Buchungen.
-- **Posten**: alle Posten nach Kategorie, mit Summen pro Monat und Jahr (umgerechnet).
-- **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind alles, was nicht jeden Monat kommt. Einen Monat antippen zeigt die einzelnen Buchungen.
+- **Posten**: alle Posten nach Kategorie, mit Summen pro Monat und Jahr (umgerechnet) und einer Suche.
+- **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind alles, was nicht jeden Monat kommt. Einen Monat antippen zeigt die einzelnen Buchungen. Darunter siehst du, welche Kategorien in den nächsten 12 Monaten am meisten kosten.
 
 ### 6. Gemeinsames Haushaltsbuch
 

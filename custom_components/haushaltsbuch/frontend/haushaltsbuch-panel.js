@@ -19,7 +19,11 @@ const FREQUENCY_PRESETS = [
   { key: "every_n_months", label: "alle X Monate", frequency: "monthly", interval: null },
   { key: "fixed_dates", label: "feste Termine im Jahr", frequency: "fixed_dates", interval: 1 },
   { key: "rolling", label: "gleitend (ab letztem Termin)", frequency: "rolling", interval: null },
+  { key: "budget", label: "Budget pro Monat (variable Ausgaben)", frequency: "budget", interval: 1 },
 ];
+
+const NOTICE_UNITS = { days: "Tage", weeks: "Wochen", months: "Monate" };
+const shortDate = (isoDate) => parseIso(isoDate).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
 
 const unitLabel = (n, unit) => (unit === "weeks" ? (n === 1 ? "Woche" : "Wochen") : n === 1 ? "Monat" : "Monate");
 
@@ -52,6 +56,7 @@ function presetOf(schedule) {
   if (frequency === "weekly") return "weekly";
   if (frequency === "fixed_dates") return "fixed_dates";
   if (frequency === "rolling") return "rolling";
+  if (frequency === "budget") return "budget";
   return "once";
 }
 
@@ -59,14 +64,18 @@ function presetOf(schedule) {
 // the month view; everything else is a special item that stands out.
 function isRegular(item) {
   const preset = presetOf(item?.schedule);
-  return preset === "monthly" || preset === "weekly" || preset === "rolling";
+  return preset === "monthly" || preset === "weekly" || preset === "rolling" || preset === "budget";
 }
 
 function scheduleLabel(item) {
   const s = item.schedule || {};
   const preset = presetOf(s);
   if (preset === "every_n_months") return `alle ${s.interval} Monate`;
-  if (preset === "rolling") return `gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`;
+  if (preset === "rolling") {
+    if (item.learned_days) return `gleitend, gelernt alle ~${item.learned_days} Tage`;
+    return `gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`;
+  }
+  if (preset === "budget") return "Budget pro Monat";
   if (preset === "weekly" && s.interval > 1) return `alle ${s.interval} Wochen`;
   if (preset === "yearly" && s.interval > 1) return `alle ${s.interval} Jahre`;
   if (preset === "fixed_dates") return (s.dates || []).map((md) => md.split("-").reverse().join(".") + ".").join(" & ");
@@ -75,9 +84,11 @@ function scheduleLabel(item) {
 
 function monthlyEquivalent(item) {
   const s = item.schedule || {};
-  const amount = Number(item.amount) || 0;
+  const amount = Number(item.current_amount ?? item.amount) || 0;
   const interval = s.interval || 1;
   switch (s.frequency) {
+    case "budget":
+      return amount;
     case "weekly":
       return (amount * 52) / 12 / interval;
     case "monthly":
@@ -87,6 +98,7 @@ function monthlyEquivalent(item) {
     case "fixed_dates":
       return (amount * (s.dates || []).length) / 12;
     case "rolling":
+      if (item.learned_days) return (amount * 365) / 12 / item.learned_days;
       return s.unit === "weeks" ? (amount * 52) / 12 / interval : amount / interval;
     default:
       return 0;
@@ -115,6 +127,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
     this.shadowRoot.addEventListener("submit", (ev) => this._onSubmit(ev));
     this.shadowRoot.addEventListener("input", (ev) => {
+      if (ev.target.name === "item-search") {
+        this._search = ev.target.value;
+        this._applySearch();
+        return;
+      }
       if (ev.target.name !== "icon") return;
       const preview = ev.target.closest("label")?.querySelector(".icon-preview");
       if (preview) preview.innerHTML = this._icon(ev.target.value.trim(), 20);
@@ -223,6 +240,23 @@ class HaushaltsbuchPanel extends HTMLElement {
     return this._scope !== "me";
   }
 
+  _applySearch() {
+    const q = (this._search || "").trim().toLowerCase();
+    for (const group of this.shadowRoot.querySelectorAll(".item-group")) {
+      let visible = 0;
+      for (const row of group.querySelectorAll(".entry")) {
+        const hit = !q || row.dataset.search.includes(q);
+        row.hidden = !hit;
+        if (hit) visible++;
+      }
+      group.hidden = visible === 0;
+    }
+  }
+
+  _scopeItems() {
+    return this._state.items.filter((i) => (this._isHousehold() ? i.household_id === this._scope : i.owner === this._state.user.id));
+  }
+
   _scopeBalance() {
     if (!this._state) return {};
     if (this._scope === "me") return this._state.user;
@@ -248,6 +282,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${this._dialog ? this._renderDialog() : ""}
     `;
     this._updateMenuButton();
+    if (this._search && this._view === "items") this._applySearch();
   }
 
   _updateMenuButton() {
@@ -315,8 +350,8 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderEntry(e, { showBalance = false, confirm = false, special = null } = {}) {
     const owner = this._isHousehold() ? `<span class="owner">${esc(e.owner_name)}</span>` : "";
-    const status = e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : e.planned ? `<span class="chip planned">Termin</span>` : this._chip(e.certainty);
-    return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="open-entry" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}" data-planned="${e.planned ? "1" : ""}">
+    const status = e.budget ? `<span class="chip budget">Budget</span>` : e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : e.planned ? `<span class="chip planned">Termin</span>` : this._chip(e.certainty);
+    return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="${e.budget ? "edit-item" : "open-entry"}" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}" data-planned="${e.planned ? "1" : ""}">
       <div class="entry-icon">${this._icon(e.icon)}</div>
       <div class="entry-main">
         <div class="entry-name">${esc(e.name)}</div>
@@ -336,7 +371,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     const pending = this._pending.length
       ? `<div class="card">
           <h3>Zu bestätigen</h3>
-          <p class="hint">Diese Buchungen waren in den letzten drei Wochen fällig. Bestätigen hilft der App, die Sicherheit besser einzuschätzen.</p>
+          <div class="row-between">
+            <p class="hint">Diese Buchungen waren in den letzten drei Wochen fällig. Bestätigen hilft der App, die Sicherheit besser einzuschätzen.</p>
+            ${this._pending.length > 1 ? `<button class="small" data-action="confirm-all">Alle ${this._pending.length} gebucht</button>` : ""}
+          </div>
           ${this._pending.map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry(e, { confirm: true })}`).join("")}
         </div>`
       : "";
@@ -350,13 +388,38 @@ class HaushaltsbuchPanel extends HTMLElement {
           )
           .join("")
       : `<div class="empty">In diesem Zeitraum ist nichts fällig.${this._state.items.length ? "" : " Lege unter „Posten“ deine ersten Einträge an."}</div>`;
-    return `${pending}
+    const deadlines = this._scopeItems()
+      .filter((i) => i.contract_info && !i.contract_info.ended && i.contract_info.days_left <= 60)
+      .sort((a, b) => a.contract_info.cancel_by.localeCompare(b.contract_info.cancel_by));
+    const deadlineCard = deadlines.length
+      ? `<div class="card">
+          <h3>Kündigungsfristen</h3>
+          <p class="hint">Verträge, die du in den nächsten 60 Tagen kündigen müsstest, wenn du sie loswerden willst.</p>
+          ${deadlines
+            .map((i) => {
+              const c = i.contract_info;
+              return `<div class="entry" data-action="edit-item" data-item="${esc(i.id)}">
+                <div class="entry-icon">${this._icon(i.icon)}</div>
+                <div class="entry-main">
+                  <div class="entry-name">${esc(i.name)}</div>
+                  <div class="entry-meta">Vertragsende ${shortDate(c.end)}${c.renews ? ", verlängert sich sonst" : ""}</div>
+                </div>
+                <div class="deadline ${c.days_left <= 14 ? "urgent" : ""}">bis ${shortDate(c.cancel_by)}<small>${c.days_left === 0 ? "heute" : `noch ${c.days_left} Tage`}</small></div>
+              </div>`;
+            })
+            .join("")}
+        </div>`
+      : "";
+    const budgetMonthly = this._scopeItems()
+      .filter((i) => i.schedule?.frequency === "budget" && i.direction === "expense" && (!i.end_date || i.end_date >= iso(today())))
+      .reduce((a, i) => a + Number(i.current_amount ?? i.amount), 0);
+    return `${pending}${deadlineCard}
       <div class="card">
         <div class="row-between">
           <h3>Die nächsten ${this._range} Tage</h3>
           <div class="segmented">${ranges.map((r) => `<button class="${r === this._range ? "active" : ""}" data-action="range" data-range="${r}">${r} Tage</button>`).join("")}</div>
         </div>
-        <p class="hint">Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.</p>
+        <p class="hint">Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.${budgetMonthly ? ` Budgets (${this._money(budgetMonthly)} pro Monat) sind gleichmäßig auf die Tage verteilt eingerechnet.` : ""}</p>
         ${list}
       </div>`;
   }
@@ -396,7 +459,7 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _renderItems() {
-    const items = this._state.items.filter((i) => (this._isHousehold() ? i.household_id === this._scope : i.owner === this._state.user.id));
+    const items = this._scopeItems();
     const groups = {};
     for (const item of items) (groups[item.category] ||= []).push(item);
     const monthlyIn = items.filter((i) => i.direction === "income").reduce((a, i) => a + monthlyEquivalent(i), 0);
@@ -418,21 +481,24 @@ class HaushaltsbuchPanel extends HTMLElement {
         <button class="secondary small" data-action="import">Importieren</button>
         <input type="file" accept=".json,application/json" data-change="import-file" hidden>
       </div>`}
+      ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="Posten suchen …" aria-label="Posten suchen" value="${esc(this._search || "")}">` : ""}
     </div>
     ${items.length ? Object.keys(groups)
       .sort()
       .map(
-        (cat) => `<div class="card"><h3>${esc(cat)}</h3>${groups[cat]
+        (cat) => `<div class="card item-group"><h3>${esc(cat)}</h3>${groups[cat]
           .map(
-            (i) => `<div class="entry" data-action="edit-item" data-item="${esc(i.id)}">
+            (i) => `<div class="entry" data-action="edit-item" data-item="${esc(i.id)}" data-search="${esc(`${i.name} ${i.category} ${i.note || ""}`.toLowerCase())}">
               <div class="entry-icon">${this._icon(i.icon)}</div>
               <div class="entry-main">
                 <div class="entry-name">${esc(i.name)}</div>
                 <div class="entry-meta">${esc(scheduleLabel(i))} · ab ${parseIso(i.start_date).toLocaleDateString("de-DE")}${i.end_date ? ` bis ${parseIso(i.end_date).toLocaleDateString("de-DE")}` : ""}
                   ${i.household_id && !this._isHousehold() ? `<span class="chip shared">${esc(households[i.household_id] || "Haushalt")}</span>` : ""}
-                  ${!i.editable ? `<span class="owner">${esc(i.owner_name)}</span>` : ""}</div>
+                  ${!i.editable ? `<span class="owner">${esc(i.owner_name)}</span>` : ""}
+                  ${i.contract_info && !i.contract_info.ended ? `<span class="chip contract ${i.contract_info.days_left <= 30 ? "urgent" : ""}">kündbar bis ${shortDate(i.contract_info.cancel_by)}</span>` : ""}
+                  ${i.contract_info?.ended ? `<span class="chip skipped">Vertrag beendet</span>` : ""}</div>
               </div>
-              <div class="entry-amount ${i.direction === "expense" ? "neg" : "pos"}">${this._money(i.direction === "expense" ? -i.amount : i.amount, true)}</div>
+              <div class="entry-amount ${i.direction === "expense" ? "neg" : "pos"}">${this._money(i.direction === "expense" ? -(i.current_amount ?? i.amount) : i.current_amount ?? i.amount, true)}${(i.price_changes || []).some((c) => c.from > iso(today())) ? `<small class="price-note">ab ${shortDate(i.price_changes.find((c) => c.from > iso(today())).from)}: ${this._money(i.price_changes.find((c) => c.from > iso(today())).amount)}</small>` : ""}</div>
             </div>`
           )
           .join("")}</div>`
@@ -480,6 +546,36 @@ class HaushaltsbuchPanel extends HTMLElement {
           })
           .join("")}
       </div>
+    </div>
+    ${this._renderCategoryTotals(rows)}`;
+  }
+
+  _renderCategoryTotals(rows) {
+    const totals = {};
+    for (const r of rows) {
+      for (const e of r.entries || []) {
+        if (e.amount >= 0 || e.certainty === "unsicher") continue;
+        const t = (totals[e.category || "Sonstiges"] ||= { sum: 0, items: new Set() });
+        t.sum += -e.amount;
+        t.items.add(e.name);
+      }
+    }
+    const list = Object.entries(totals).sort((a, b) => b[1].sum - a[1].sum);
+    if (!list.length) return "";
+    const total = list.reduce((a, [, t]) => a + t.sum, 0);
+    const max = list[0][1].sum;
+    return `<div class="card">
+      <h3>Ausgaben nach Kategorie</h3>
+      <p class="hint">Summe der nächsten ${rows.length} Monate (sichere und wahrscheinliche Ausgaben, inklusive Budgets): <b>${this._money(total)}</b>, im Schnitt ${this._money(total / rows.length)} pro Monat.</p>
+      ${list
+        .map(
+          ([cat, t]) => `<div class="cat-row">
+            <div class="cat-name">${esc(cat)}<small>${esc([...t.items].slice(0, 4).join(", "))}${t.items.size > 4 ? " …" : ""}</small></div>
+            <div class="cat-bar"><span style="width:${(t.sum / max) * 100}%"></span></div>
+            <div class="cat-sum">${this._money(t.sum)}<small>${Math.round((t.sum / total) * 100)} %</small></div>
+          </div>`
+        )
+        .join("")}
     </div>`;
   }
 
@@ -552,7 +648,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           <option value="expense" ${item.direction !== "income" ? "selected" : ""}>Ausgabe</option>
           <option value="income" ${item.direction === "income" ? "selected" : ""}>Einnahme</option>
         </select></label>
-        <label>Betrag (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
+        <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
         <label>Kategorie<input name="category" list="categories" required value="${esc(item.category || "")}" ${dis}>
           <datalist id="categories">${this._state.categories.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
         <label>Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="mdi:netflix oder Emoji" value="${esc(item.icon || "")}" ${dis}></label>
@@ -564,15 +660,19 @@ class HaushaltsbuchPanel extends HTMLElement {
           <option value="months" ${item.schedule?.unit !== "weeks" ? "selected" : ""}>Monat(en)</option>
           <option value="weeks" ${item.schedule?.unit === "weeks" ? "selected" : ""}>Woche(n)</option>
         </select></span></label>
-        <p class="hint full">Der nächste Termin richtet sich nach dem letzten. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.</p>` : ""}
+        <label class="check full"><input type="checkbox" name="learn" ${item.schedule?.learn !== false ? "checked" : ""} ${dis}> Abstand aus bestätigten Terminen lernen${item.learned_days ? ` (zurzeit ~${item.learned_days} Tage)` : ""}</label>
+        <p class="hint full">Der nächste Termin richtet sich nach dem letzten. Ab drei bestätigten Terminen rechnet die App mit deinem echten durchschnittlichen Abstand. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.</p>` : ""}
         ${preset === "weekly" ? `<label>Alle wie viele Wochen?<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
+        ${preset === "budget" ? `<p class="hint full">Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird gleichmäßig über die Tage des Monats vom erwarteten Kontostand abgezogen und erscheint in der Monatsübersicht, aber nicht als einzelne Buchung.</p>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">Termine im Jahr (TT.MM., durch Komma getrennt)<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
-        <label>${preset === "once" ? "Datum" : preset === "fixed_dates" ? "Gültig ab" : preset === "rolling" ? "Erster Termin" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
+        <label>${preset === "once" ? "Datum" : preset === "fixed_dates" || preset === "budget" ? "Gültig ab" : preset === "rolling" ? "Erster Termin" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
           <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> Enddatum festlegen</label>
           ${hasEnd ? `<input name="end_date" type="date" aria-label="Enddatum" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
         </div>` : ""}
       </div>
+      ${preset !== "once" ? this._renderPriceChanges(item, dis) : ""}
+      ${preset !== "once" && preset !== "budget" ? this._renderContractFields(d, dis) : ""}
       <details ${item.amount_variance_pct || item.date_tolerance_days || item.certainty || item.weekend_shift ? "open" : ""}>
         <summary>Schwankung und Sicherheit</summary>
         <div class="grid">
@@ -606,6 +706,43 @@ class HaushaltsbuchPanel extends HTMLElement {
         </div>
       </div>
     </form>`;
+  }
+
+  _renderPriceChanges(item, dis) {
+    const changes = item.price_changes || [];
+    return `<details ${changes.length ? "open" : ""}>
+      <summary>Preisänderungen${changes.length ? ` (${changes.length})` : ""}</summary>
+      <p class="hint">Wird es teurer oder günstiger, trag hier ein, ab wann der neue Betrag gilt. Frühere Buchungen behalten ihren alten Betrag.</p>
+      ${changes
+        .map(
+          (c, idx) => `<div class="price-row">
+            <label>ab<input name="pc_from" type="date" required value="${esc(c.from || "")}" ${dis}></label>
+            <label>neuer Betrag<input name="pc_amount" type="number" step="0.01" min="0" required value="${c.amount ?? ""}" ${dis}></label>
+            ${dis ? "" : `<button type="button" class="danger small" data-action="price-remove" data-index="${idx}" aria-label="Preisänderung entfernen">✕</button>`}
+          </div>`
+        )
+        .join("")}
+      ${dis ? "" : `<button type="button" class="secondary small" data-action="price-add">+ Preisänderung</button>`}
+    </details>`;
+  }
+
+  _renderContractFields(d, dis) {
+    const item = d.item;
+    const c = item.contract || {};
+    const hasContract = d.hasContract ?? Boolean(c.end);
+    const info = item.contract_info;
+    return `<details ${hasContract ? "open" : ""}>
+      <summary>Vertrag und Kündigung${info && !info.ended ? ` · kündbar bis ${shortDate(info.cancel_by)}` : ""}</summary>
+      <label class="check"><input type="checkbox" name="has_contract" data-change="has_contract" ${hasContract ? "checked" : ""} ${dis}> Vertragslaufzeit erfassen</label>
+      ${hasContract ? `<div class="grid">
+        <label>Vertrag läuft bis<input name="contract_end" type="date" required value="${esc(c.end || "")}" ${dis}></label>
+        <label>Kündigungsfrist<span class="inline-fields"><input name="notice" type="number" min="0" max="365" value="${c.notice ?? 1}" ${dis}><select name="notice_unit" ${dis}>
+          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.notice_unit || "months") === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select></span></label>
+        <label>Verlängert sich danach um<span class="inline-fields"><input name="renew_months" type="number" min="0" max="120" value="${c.renew_months ?? 12}" ${dis}><span class="unit">Monate</span></span></label>
+        <p class="hint full">0 Monate heißt: Der Vertrag endet und verlängert sich nicht. ${info ? (info.ended ? `Der Vertrag ist am ${shortDate(info.end)} ausgelaufen.` : `Nächstes Vertragsende ${shortDate(info.end)}, kündigen spätestens am <b>${shortDate(info.cancel_by)}</b>.`) : ""}</p>
+      </div>` : ""}
+    </details>`;
   }
 
   _renderImportForm(d) {
@@ -753,7 +890,16 @@ class HaushaltsbuchPanel extends HTMLElement {
     const f = new FormData(form);
     const preset = FREQUENCY_PRESETS.find((p) => p.key === f.get("preset"));
     const schedule = { frequency: preset.frequency, interval: preset.interval || Number(f.get("interval")) || 1, dates: [] };
-    if (preset.key === "rolling") schedule.unit = f.get("unit") || "months";
+    if (preset.key === "rolling") {
+      schedule.unit = f.get("unit") || "months";
+      schedule.learn = f.get("learn") === "on";
+    }
+    const froms = f.getAll("pc_from");
+    const amounts = f.getAll("pc_amount");
+    const price_changes = froms.map((from, i) => ({ from, amount: amounts[i] }));
+    const contract = f.get("has_contract")
+      ? { end: f.get("contract_end") || "", notice: Number(f.get("notice") || 0), notice_unit: f.get("notice_unit") || "months", renew_months: Number(f.get("renew_months") || 0) }
+      : null;
     if (preset.key === "fixed_dates") {
       schedule.dates = String(f.get("dates") || "")
         .split(/[,;\s]+/)
@@ -779,6 +925,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       weekend_shift: f.get("weekend_shift") || null,
       household_id: f.get("household_id") || null,
       note: f.get("note"),
+      price_changes,
+      contract,
     };
   }
 
@@ -788,7 +936,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const kind = form.dataset.form;
     if (kind === "item") {
       const item = this._readItemForm(form);
-      const { editable, owner_name, owner, ...payload } = item;
+      const { editable, owner_name, owner, current_amount, contract_info, learned_days, ...payload } = item;
       this._run(() => this._ws("item/save", { item: payload }));
     } else if (kind === "balance") {
       const f = new FormData(form);
@@ -826,6 +974,11 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._scope = el.value;
       this._selectedDay = null;
       this._reload();
+    } else if (kind === "has_contract") {
+      const form = el.closest("form");
+      this._dialog.item = this._readItemForm(form);
+      this._dialog.hasContract = el.checked;
+      this._render();
     } else if (kind === "has_end") {
       const form = el.closest("form");
       this._dialog.item = this._readItemForm(form);
@@ -889,6 +1042,25 @@ class HaushaltsbuchPanel extends HTMLElement {
         break;
       case "export":
         this._export();
+        break;
+      case "price-add": {
+        const item = this._readItemForm(target.closest("form"));
+        item.price_changes = [...item.price_changes, { from: iso(today()), amount: item.amount }];
+        this._dialog.item = item;
+        this._render();
+        break;
+      }
+      case "price-remove": {
+        const item = this._readItemForm(target.closest("form"));
+        item.price_changes = item.price_changes.filter((_, i) => i !== Number(target.dataset.index));
+        this._dialog.item = item;
+        this._render();
+        break;
+      }
+      case "confirm-all":
+        this._run(async () => {
+          for (const e of this._pending) await this._ws("confirm", { item_id: e.item_id, due_date: e.due_date, status: "booked" });
+        });
         break;
       case "import":
         this.shadowRoot.querySelector('input[data-change="import-file"]').click();
@@ -1018,6 +1190,23 @@ const STYLES = `
   .chip.booked { --chip: var(--success-color, #43a047); }
   .chip.skipped { --chip: var(--secondary-text-color); }
   .chip.shared { --chip: var(--primary-color); }
+  .chip.budget { --chip: var(--info-color, #039be5); }
+  .chip.contract { --chip: var(--primary-color); }
+  .chip.contract.urgent { --chip: var(--error-color, #db4437); }
+  .price-note { display: block; font-size: 11px; font-weight: 400; color: var(--secondary-text-color); }
+  .price-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
+  .unit { align-self: center; font-size: 14px; color: var(--primary-text-color); }
+  .deadline { text-align: right; font-size: 13px; font-weight: 500; color: var(--primary-color); white-space: nowrap; }
+  .deadline small { display: block; font-weight: 400; color: var(--secondary-text-color); }
+  .deadline.urgent { color: var(--error-color, #db4437); }
+  .search { margin-top: 12px; }
+  [hidden] { display: none !important; }
+  .cat-row { display: grid; grid-template-columns: minmax(0, 40%) 1fr 92px; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
+  .cat-name { font-size: 14px; overflow: hidden; }
+  .cat-name small, .cat-sum small { display: block; font-size: 11px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cat-bar { height: 10px; background: var(--secondary-background-color); border-radius: 5px; overflow: hidden; }
+  .cat-bar span { display: block; height: 100%; background: var(--error-color, #db4437); opacity: 0.75; border-radius: 5px; }
+  .cat-sum { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .chip.special { --chip: var(--warning-color, #ffa600); background: var(--chip); color: #000; border: none; }
   .month-specials { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 64px; }
   .special-pill { display: inline-flex; align-items: center; gap: 4px; background: rgba(255, 166, 0, 0.18); border-left: 3px solid var(--warning-color, #ffa600); color: var(--primary-text-color); border-radius: 6px; padding: 1px 8px 1px 6px; font-size: 12px; line-height: 20px; }

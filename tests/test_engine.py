@@ -5,6 +5,10 @@ import pytest
 
 from custom_components.haushaltsbuch.engine import (
     LIKELY,
+    amount_on,
+    budget_per_day,
+    contract_info,
+    learned_interval_days,
     SURE,
     UNSURE,
     certainty_for,
@@ -207,3 +211,56 @@ def test_rolling_in_weeks_and_end_date():
 def test_override_moves_single_fixed_booking_only():
     it = item(start_date="2026-11-15", overrides=[{"due_date": "2026-12-15", "date": "2026-12-22", "amount": None}])
     assert dates_of(it, end="2027-01-31") == ["2026-11-16", "2026-12-22", "2027-01-15"]
+
+
+def test_price_change_applies_from_date_only():
+    it = item(start_date="2026-01-15", price_changes=[{"from": "2026-03-01", "amount": 15.99}])
+    occ = occurrences([it], date(2026, 1, 1), date(2026, 4, 30))
+    assert [o.amount for o in occ] == [-10, -10, -15.99, -15.99]
+    assert amount_on(it, date(2026, 2, 28)) == 10
+    # a booking confirmed at the old price stays sure after the change
+    confirmed = item(
+        price_changes=[{"from": "2026-05-01", "amount": 12}],
+        confirmations=[{"due_date": "2026-04-15", "status": "booked", "actual_date": None, "actual_amount": 10}],
+    )
+    assert certainty_for(confirmed, date(2026, 5, 15)) == SURE
+
+
+def test_contract_cancel_by_and_renewal():
+    it = item(contract={"end": "2026-12-31", "notice": 3, "notice_unit": "months", "renew_months": 12})
+    info = contract_info(it, date(2026, 11, 2))
+    # cancel-by date for 2026 has passed, so the next one is for the renewed end
+    assert info["end"] == "2027-12-31" and info["cancel_by"] == "2027-09-30" and info["renews"]
+    info = contract_info(it, date(2026, 6, 1))
+    assert info["end"] == "2026-12-31" and info["cancel_by"] == "2026-09-30"
+    assert info["days_left"] == 121
+    fixed = item(contract={"end": "2026-10-31", "notice": 4, "notice_unit": "weeks", "renew_months": 0})
+    info = contract_info(fixed, date(2026, 11, 2))
+    assert info["ended"] and info["cancel_by"] == "2026-10-03"
+    assert contract_info(item(), date(2026, 1, 1)) is None
+
+
+def test_budget_spreads_over_month_and_counts_as_likely():
+    budget = item(id="food", amount=600, start_date="2026-11-01", schedule={"frequency": "budget"})
+    assert occurrences([budget], date(2026, 11, 1), date(2026, 11, 30)) == []
+    assert budget_per_day([budget], date(2026, 11, 10)) == pytest.approx(-20)
+    days = forecast([budget], date(2026, 11, 1), date(2026, 11, 30), 1000.0, date(2026, 11, 10))
+    assert days[-1].balance_likely == pytest.approx(1000 - 20 * 20)
+    assert days[-1].balance_sure == 1000
+    nov, dec = month_summaries([budget], date(2026, 11, 1), 2)
+    assert nov["expense"] == 600 and dec["expense"] == 600
+    assert nov["entries"][0]["budget"] is True
+    # started mid-month: pro rata
+    late = item(amount=300, start_date="2026-11-16", schedule={"frequency": "budget"})
+    assert month_summaries([late], date(2026, 11, 1), 1)[0]["expense"] == 150
+
+
+def test_rolling_learns_interval_from_booked_visits():
+    visits = ["2026-08-01", "2026-09-05", "2026-10-10"]  # every 35 days
+    conf = [{"due_date": d, "status": "booked", "actual_date": d, "actual_amount": None} for d in visits]
+    it = item(start_date="2026-08-01", schedule={"frequency": "rolling", "interval": 1, "unit": "months"}, confirmations=conf)
+    assert learned_interval_days(it) == 35
+    assert dates_of(it, start="2026-10-11", end="2026-12-31") == ["2026-11-14", "2026-12-19"]
+    off = item(start_date="2026-08-01", schedule={"frequency": "rolling", "interval": 1, "unit": "months", "learn": False}, confirmations=conf)
+    assert learned_interval_days(off) is None
+    assert dates_of(off, start="2026-10-11", end="2026-12-31") == ["2026-11-10", "2026-12-10"]

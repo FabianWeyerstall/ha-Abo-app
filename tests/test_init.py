@@ -111,6 +111,8 @@ async def test_websocket_flow_and_privacy(
     res = await ben.receive_json()
     assert [i["id"] for i in res["result"]["items"]] == [item_id]
     assert res["result"]["items"][0]["editable"] is False
+    assert res["result"]["items"][0]["current_amount"] == 13.99
+    assert res["result"]["items"][0]["contract_info"] is None
     await ben.send_json_auto_id({"type": f"{DOMAIN}/summary", "scope": household_id, "months": 2})
     res = await ben.receive_json()
     assert res["success"] and len(res["result"]) == 2

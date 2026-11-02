@@ -175,3 +175,29 @@ def test_import_rejects_bad_files_without_changes():
     with pytest.raises(ValidationError):
         book.import_items("anna", bad, replace=True)
     assert [i["name"] for i in book.own_items("anna")] == ["Netflix"]
+
+
+def test_new_item_fields_are_validated():
+    book = Book()
+    item_id = book.save_item("anna", {
+        **ITEM,
+        "price_changes": [{"from": "2027-01-01", "amount": "15.99"}, {"from": "2026-12-01", "amount": 14}],
+        "contract": {"end": "2027-06-30", "notice": "1", "notice_unit": "months", "renew_months": "12"},
+    })
+    saved = book.data["items"][item_id]
+    assert [c["from"] for c in saved["price_changes"]] == ["2026-12-01", "2027-01-01"]
+    assert saved["contract"] == {"end": "2027-06-30", "notice": 1, "notice_unit": "months", "renew_months": 12}
+    no_contract = book.save_item("anna", {**ITEM, "contract": {"end": "", "notice": 3}})
+    assert book.data["items"][no_contract]["contract"] is None
+    rolling = book.save_item("anna", {**ITEM, "schedule": {"frequency": "rolling", "learn": False}})
+    assert book.data["items"][rolling]["schedule"]["learn"] is False
+    budget = book.save_item("anna", {**ITEM, "schedule": {"frequency": "budget"}})
+    assert book.data["items"][budget]["schedule"]["frequency"] == "budget"
+    for bad in (
+        {"price_changes": [{"from": "x", "amount": 1}]},
+        {"price_changes": [{"from": "2026-01-01", "amount": "abc"}]},
+        {"contract": {"end": "2026-01-01", "notice_unit": "years"}},
+        {"contract": {"end": "2026-01-01", "notice": 400}},
+    ):
+        with pytest.raises(ValidationError):
+            book.save_item("anna", {**ITEM, **bad})

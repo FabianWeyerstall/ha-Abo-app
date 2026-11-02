@@ -15,7 +15,14 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
 from .const import DEFAULT_CATEGORIES, DOMAIN, TEMPLATES
-from .engine import forecast, month_summaries, parse_date
+from .engine import (
+    amount_on,
+    contract_info,
+    forecast,
+    learned_interval_days,
+    month_summaries,
+    parse_date,
+)
 from .store import AccessError, ValidationError
 
 SCOPE_ME = "me"
@@ -96,6 +103,7 @@ async def ws_state(hass, connection, msg, data):
     user_id = connection.user.id
     book = data.book
     names = await _user_names(hass)
+    today = date.today()
     active_users = [
         {"id": user.id, "name": user.name or user.id}
         for user in await hass.auth.async_get_users()
@@ -108,6 +116,9 @@ async def ws_state(hass, connection, msg, data):
                 **{k: v for k, v in item.items() if k != "confirmations"},
                 "owner_name": names.get(item["owner"], "?"),
                 "editable": item["owner"] == user_id,
+                "current_amount": amount_on(item, today),
+                "contract_info": contract_info(item, today),
+                "learned_days": learned_interval_days(item),
             }
         )
     households = [
