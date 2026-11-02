@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Haushaltsbuch",
+        "description": "Adds the Haushaltsbuch panel to the sidebar. Every user keeps their own entries there."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Haushaltsbuch is already set up."
+    }
+  },
+  "entity": {
+    "calendar": {
+      "due_dates": { "name": "Due dates" }
+    },
+    "sensor": {
+      "next_expense": { "name": "Next expense" },
+      "next_income": { "name": "Next income" },
+      "month_end_balance": { "name": "Balance at month end" }
+    }
+  }
+}
