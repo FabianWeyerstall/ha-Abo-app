@@ -484,6 +484,9 @@ class HaushaltsbuchPanel extends HTMLElement {
     const item = d.item;
     const preset = d.preset || presetOf(item.schedule);
     const readOnly = item.id && !item.editable;
+    // iOS shows an empty date field as today and offers no way to clear it,
+    // so the end date is only present while the checkbox is ticked.
+    const hasEnd = d.hasEnd ?? Boolean(item.end_date);
     const dis = readOnly ? "disabled" : "";
     const templates = !item.id
       ? `<div class="templates">${this._state.templates
@@ -515,7 +518,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         ${preset === "weekly" ? `<label>Alle wie viele Wochen?<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">Termine im Jahr (TT.MM., durch Komma getrennt)<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
         <label>${preset === "once" ? "Datum" : preset === "fixed_dates" ? "Gültig ab" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
-        ${preset !== "once" ? `<label>Enddatum (optional)<input name="end_date" type="date" value="${esc(item.end_date || "")}" ${dis}></label>` : ""}
+        ${preset !== "once" ? `<div class="end-date">
+          <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> Enddatum festlegen</label>
+          ${hasEnd ? `<input name="end_date" type="date" aria-label="Enddatum" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
+        </div>` : ""}
       </div>
       <details ${item.amount_variance_pct || item.date_tolerance_days || item.certainty || item.weekend_shift ? "open" : ""}>
         <summary>Schwankung und Sicherheit</summary>
@@ -638,7 +644,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       category: f.get("category"),
       icon: f.get("icon"),
       start_date: f.get("start_date"),
-      end_date: f.get("end_date") || null,
+      end_date: f.get("has_end") ? f.get("end_date") || null : null,
       schedule,
       amount_variance_pct: Number(f.get("amount_variance_pct") || 0),
       date_tolerance_days: Number(f.get("date_tolerance_days") || 0),
@@ -682,6 +688,11 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._scope = el.value;
       this._selectedDay = null;
       this._reload();
+    } else if (kind === "has_end") {
+      const form = el.closest("form");
+      this._dialog.item = this._readItemForm(form);
+      this._dialog.hasEnd = el.checked;
+      this._render();
     } else if (kind === "preset") {
       const form = el.closest("form");
       this._dialog.item = this._readItemForm(form);
@@ -895,6 +906,7 @@ const STYLES = `
   .template { display: flex; align-items: center; gap: 4px; background: var(--secondary-background-color); color: var(--primary-text-color); white-space: nowrap; font-size: 13px; padding: 6px 10px; border-radius: 16px; }
   .icon-preview { display: inline-flex; vertical-align: middle; color: var(--primary-color); }
   .members { margin: 12px 0; }
+  .end-date { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
   .dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
   .dialog-actions > div { display: flex; gap: 8px; flex-wrap: wrap; }
   @media (max-width: 600px) {
