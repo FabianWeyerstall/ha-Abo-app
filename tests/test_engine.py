@@ -78,8 +78,18 @@ def test_weekly_and_once():
     assert list(nominal_dates(once, date(2030, 1, 1))) == [date(2026, 3, 1)]
 
 
-def test_income_shifts_to_previous_business_day():
-    salary = item(direction="income", amount=3000, start_date="2026-01-31")
+def test_weekend_shift_defaults_to_next_business_day():
+    # Feed-in payment due 2027-01-02 (Saturday, after the Jan 1 holiday)
+    feed_in = item(direction="income", amount=31, start_date="2026-11-02")
+    occ = occurrences([feed_in], date(2026, 12, 1), date(2027, 1, 31))
+    assert [o.date for o in occ] == [date(2026, 12, 2), date(2027, 1, 4)]
+    dec, jan = month_summaries([feed_in], date(2026, 12, 1), 2)
+    assert dec["income"] == 31 and jan["income"] == 31
+    assert [e["date"] for e in jan["entries"]] == ["2027-01-04"]
+
+
+def test_salary_can_be_paid_on_previous_business_day():
+    salary = item(direction="income", amount=3000, start_date="2026-01-31", weekend_shift="previous")
     occ = occurrences([salary], date(2026, 1, 1), date(2026, 1, 31))
     # 2026-01-31 is a Saturday -> paid Friday 30th, positive amount
     assert [(o.date, o.amount) for o in occ] == [(date(2026, 1, 30), 3000.0)]

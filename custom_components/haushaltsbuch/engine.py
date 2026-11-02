@@ -156,9 +156,14 @@ def nominal_dates(item: dict[str, Any], until: date) -> Iterable[date]:
 
 
 def default_shift(item: dict[str, Any]) -> str:
+    """Bookings due on a weekend or bank holiday move to the next business day.
+
+    Salary is the usual exception (paid earlier); the salary template sets
+    "previous" explicitly instead of guessing it from the direction.
+    """
     if item.get("weekend_shift") in (SHIFT_NEXT, SHIFT_PREVIOUS, SHIFT_NONE):
         return item["weekend_shift"]
-    return SHIFT_PREVIOUS if item.get("direction") == INCOME else SHIFT_NEXT
+    return SHIFT_NEXT
 
 
 # --------------------------------------------------------------------------
@@ -362,14 +367,18 @@ def month_summaries(
             "uncertain_income": 0.0,
             "uncertain_expense": 0.0,
         }
+        entries = []
         for occ in occurrences(items, month_start, month_end):
             if occ.status == STATUS_SKIPPED:
                 continue
+            entries.append(occ.as_dict())
             uncertain = occ.certainty == UNSURE
             if occ.amount >= 0:
                 summary["uncertain_income" if uncertain else "income"] += occ.amount
             else:
                 summary["uncertain_expense" if uncertain else "expense"] += -occ.amount
         summary["net"] = summary["income"] - summary["expense"]
-        result.append({k: round(v, 2) if isinstance(v, float) else v for k, v in summary.items()})
+        summary = {k: round(v, 2) if isinstance(v, float) else v for k, v in summary.items()}
+        summary["entries"] = entries
+        result.append(summary)
     return result

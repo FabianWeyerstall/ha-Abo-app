@@ -39,7 +39,7 @@ DEFAULT_CATEGORIES = [
 
 # Templates for quick entry. Icons are Material Design Icons available in HA.
 TEMPLATES = [
-    {"name": "Gehalt", "direction": "income", "category": "Gehalt", "icon": "mdi:briefcase", "frequency": "monthly"},
+    {"name": "Gehalt", "direction": "income", "category": "Gehalt", "icon": "mdi:briefcase", "frequency": "monthly", "weekend_shift": "previous"},
     {"name": "Bonus", "direction": "income", "category": "Einnahmen", "icon": "mdi:gift", "frequency": "once", "certainty": "unsicher"},
     {"name": "Photovoltaik Einspeisevergütung", "direction": "income", "category": "Photovoltaik", "icon": "mdi:solar-power-variant", "frequency": "monthly"},
     {"name": "Steuererstattung", "direction": "income", "category": "Steuern", "icon": "mdi:cash-refund", "frequency": "once", "certainty": "unsicher"},
