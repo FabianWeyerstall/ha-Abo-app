@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -60,7 +60,7 @@ TEMPLATES = [
     {"name": "Netflix", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:netflix", "frequency": "monthly"},
     {"name": "Apple", "direction": "expense", "category": "Abos", "icon": "mdi:apple", "frequency": "monthly"},
     {"name": "Cookidoo", "direction": "expense", "category": "Abos", "icon": "mdi:pot-steam", "frequency": "yearly"},
-    {"name": "Friseur", "direction": "expense", "category": "Gesundheit & Pflege", "icon": "mdi:content-cut", "frequency": "monthly", "interval": 2, "date_tolerance_days": 10},
+    {"name": "Friseur", "direction": "expense", "category": "Gesundheit & Pflege", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
     {"name": "Kindergarten", "direction": "expense", "category": "Kinder", "icon": "mdi:human-male-child", "frequency": "monthly"},
     {"name": "Räderwechsel", "direction": "expense", "category": "Auto", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
 ]

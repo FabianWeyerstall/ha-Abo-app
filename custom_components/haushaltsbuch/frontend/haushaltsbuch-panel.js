@@ -18,7 +18,10 @@ const FREQUENCY_PRESETS = [
   { key: "yearly", label: "jährlich", frequency: "yearly", interval: 1 },
   { key: "every_n_months", label: "alle X Monate", frequency: "monthly", interval: null },
   { key: "fixed_dates", label: "feste Termine im Jahr", frequency: "fixed_dates", interval: 1 },
+  { key: "rolling", label: "gleitend (ab letztem Termin)", frequency: "rolling", interval: null },
 ];
+
+const unitLabel = (n, unit) => (unit === "weeks" ? (n === 1 ? "Woche" : "Wochen") : n === 1 ? "Monat" : "Monate");
 
 const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
@@ -48,6 +51,7 @@ function presetOf(schedule) {
   if (frequency === "yearly") return "yearly";
   if (frequency === "weekly") return "weekly";
   if (frequency === "fixed_dates") return "fixed_dates";
+  if (frequency === "rolling") return "rolling";
   return "once";
 }
 
@@ -55,6 +59,7 @@ function scheduleLabel(item) {
   const s = item.schedule || {};
   const preset = presetOf(s);
   if (preset === "every_n_months") return `alle ${s.interval} Monate`;
+  if (preset === "rolling") return `gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`;
   if (preset === "weekly" && s.interval > 1) return `alle ${s.interval} Wochen`;
   if (preset === "yearly" && s.interval > 1) return `alle ${s.interval} Jahre`;
   if (preset === "fixed_dates") return (s.dates || []).map((md) => md.split("-").reverse().join(".") + ".").join(" & ");
@@ -74,6 +79,8 @@ function monthlyEquivalent(item) {
       return amount / 12 / interval;
     case "fixed_dates":
       return (amount * (s.dates || []).length) / 12;
+    case "rolling":
+      return s.unit === "weeks" ? (amount * 52) / 12 / interval : amount / interval;
     default:
       return 0;
   }
@@ -296,8 +303,8 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderEntry(e, { showBalance = false, confirm = false } = {}) {
     const owner = this._isHousehold() ? `<span class="owner">${esc(e.owner_name)}</span>` : "";
-    const status = e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : this._chip(e.certainty);
-    return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="open-entry" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}">
+    const status = e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : e.planned ? `<span class="chip planned">Termin</span>` : this._chip(e.certainty);
+    return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="open-entry" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}" data-planned="${e.planned ? "1" : ""}">
       <div class="entry-icon">${this._icon(e.icon)}</div>
       <div class="entry-main">
         <div class="entry-name">${esc(e.name)}</div>
@@ -525,9 +532,14 @@ class HaushaltsbuchPanel extends HTMLElement {
           ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p.label}</option>`).join("")}
         </select></label>
         ${preset === "every_n_months" ? `<label>Alle wie viele Monate?<input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 2}" ${dis}></label>` : ""}
+        ${preset === "rolling" ? `<label>Nächster Termin nach<span class="inline-fields"><input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 1}" ${dis}><select name="unit" ${dis}>
+          <option value="months" ${item.schedule?.unit !== "weeks" ? "selected" : ""}>Monat(en)</option>
+          <option value="weeks" ${item.schedule?.unit === "weeks" ? "selected" : ""}>Woche(n)</option>
+        </select></span></label>
+        <p class="hint full">Der nächste Termin richtet sich nach dem letzten. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.</p>` : ""}
         ${preset === "weekly" ? `<label>Alle wie viele Wochen?<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">Termine im Jahr (TT.MM., durch Komma getrennt)<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
-        <label>${preset === "once" ? "Datum" : preset === "fixed_dates" ? "Gültig ab" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
+        <label>${preset === "once" ? "Datum" : preset === "fixed_dates" ? "Gültig ab" : preset === "rolling" ? "Erster Termin" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
           <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> Enddatum festlegen</label>
           ${hasEnd ? `<input name="end_date" type="date" aria-label="Enddatum" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
@@ -586,21 +598,31 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderConfirmForm(d) {
     const item = this._state.items.find((i) => i.id === d.item_id);
+    const rolling = item?.schedule?.frequency === "rolling";
+    const future = d.date > iso(today());
+    const booked = d.status === "booked";
+    const hint = booked
+      ? "Diese Buchung ist als gebucht bestätigt."
+      : future
+        ? `Geplant für ${parseIso(d.date).toLocaleDateString("de-DE")}. Hast du schon einen festen Termin? Dann Datum und Betrag anpassen und als Termin festlegen.${rolling ? " Alle weiteren Termine rücken danach automatisch nach." : " Das verschiebt nur diese eine Buchung."}`
+        : `Fällig am ${parseIso(d.date).toLocaleDateString("de-DE")}. Ist die Buchung so auf dem Konto angekommen?`;
     return `<form data-form="confirm">
       <h2>${esc(item?.name || "Buchung")}</h2>
-      <p class="hint">Fällig am ${parseIso(d.due).toLocaleDateString("de-DE")}. Ist die Buchung so auf dem Konto angekommen?</p>
+      <p class="hint">${hint}</p>
       <div class="grid">
-        <label>Tatsächliches Datum<input name="actual_date" type="date" value="${esc(d.date)}"></label>
-        <label>Tatsächlicher Betrag<input name="actual_amount" type="number" step="0.01" min="0" value="${esc(d.amount)}"></label>
+        <label>Datum<input name="actual_date" type="date" required value="${esc(d.date)}"></label>
+        <label>Betrag<input name="actual_amount" type="number" step="0.01" min="0" value="${esc(d.amount)}"></label>
       </div>
       <div class="dialog-actions">
         <div>
           ${item ? `<button type="button" class="secondary" data-action="edit-item" data-item="${esc(item.id)}">Posten öffnen</button>` : ""}
-          ${d.status ? `<button type="button" class="secondary" data-action="reset-confirm">Zurücksetzen</button>` : ""}
+          ${d.status ? `<button type="button" class="secondary" data-action="reset-confirm">Bestätigung zurücksetzen</button>` : ""}
+          ${d.planned && !booked ? `<button type="button" class="secondary" data-action="plan-clear">Termin entfernen</button>` : ""}
         </div>
         <div>
+          ${booked ? "" : `<button type="button" class="${future ? "" : "secondary"}" data-action="plan-save">${d.planned ? "Termin ändern" : "Als Termin festlegen"}</button>`}
           <button type="button" class="secondary" data-action="confirm-skip">Ausgefallen</button>
-          <button type="submit">Gebucht</button>
+          <button type="submit" class="${future && !booked ? "secondary" : ""}">Gebucht</button>
         </div>
       </div>
     </form>`;
@@ -637,6 +659,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const f = new FormData(form);
     const preset = FREQUENCY_PRESETS.find((p) => p.key === f.get("preset"));
     const schedule = { frequency: preset.frequency, interval: preset.interval || Number(f.get("interval")) || 1, dates: [] };
+    if (preset.key === "rolling") schedule.unit = f.get("unit") || "months";
     if (preset.key === "fixed_dates") {
       schedule.dates = String(f.get("dates") || "")
         .split(/[,;\s]+/)
@@ -796,11 +819,22 @@ class HaushaltsbuchPanel extends HTMLElement {
         if (confirm(`„${this._dialog.item.name}“ wirklich löschen?`)) this._run(() => this._ws("item/delete", { item_id: this._dialog.item.id }));
         break;
       case "open-entry":
-        this._dialog = { type: "confirm", item_id: target.dataset.item, due: target.dataset.due, date: target.dataset.date, amount: target.dataset.amount, status: target.dataset.status };
+        this._dialog = { type: "confirm", item_id: target.dataset.item, due: target.dataset.due, date: target.dataset.date, amount: target.dataset.amount, status: target.dataset.status, planned: Boolean(target.dataset.planned) };
         this._render();
         break;
       case "quick-confirm":
         this._run(() => this._ws("confirm", { item_id: target.dataset.item, due_date: target.dataset.due, status: target.dataset.status }));
+        break;
+      case "plan-save": {
+        const form = target.closest("form");
+        if (!form.reportValidity()) break;
+        const f = new FormData(form);
+        const amount = f.get("actual_amount");
+        this._run(() => this._ws("plan", { item_id: this._dialog.item_id, due_date: this._dialog.due, date: f.get("actual_date"), amount: amount === "" ? null : Number(amount) }));
+        break;
+      }
+      case "plan-clear":
+        this._run(() => this._ws("plan", { item_id: this._dialog.item_id, due_date: this._dialog.due, date: null }));
         break;
       case "confirm-skip":
         this._run(() => this._ws("confirm", { item_id: this._dialog.item_id, due_date: this._dialog.due, status: "skipped" }));
@@ -870,6 +904,9 @@ const STYLES = `
   .chip.booked { --chip: var(--success-color, #43a047); }
   .chip.skipped { --chip: var(--secondary-text-color); }
   .chip.shared { --chip: var(--primary-color); }
+  .chip.planned { --chip: var(--success-color, #43a047); background: var(--chip); color: var(--text-primary-color, #fff); }
+  .inline-fields { display: flex; gap: 8px; }
+  .inline-fields input { width: 80px; flex: none; }
   .icon-fallback { display: inline-block; width: calc(var(--size) * 0.5); height: calc(var(--size) * 0.5); border-radius: 50%; background: var(--primary-color); opacity: 0.5; }
   .empty { color: var(--secondary-text-color); text-align: center; padding: 24px 8px; }
   .error { background: var(--error-color, #db4437); color: #fff; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }

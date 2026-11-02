@@ -28,6 +28,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_save_item,
         ws_delete_item,
         ws_confirm,
+        ws_plan,
         ws_set_balance,
         ws_forecast,
         ws_summary,
@@ -212,6 +213,24 @@ async def ws_confirm(hass, connection, msg, data):
         msg["status"],
         msg.get("actual_date"),
         msg.get("actual_amount"),
+    )
+    return (None, True)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan",
+        vol.Required("item_id"): str,
+        vol.Required("due_date"): str,
+        vol.Required("date"): vol.Any(None, str),
+        vol.Optional("amount"): vol.Any(None, vol.Coerce(float)),
+    }
+)
+@websocket_api.async_response
+@_handler
+async def ws_plan(hass, connection, msg, data):
+    data.book.plan(
+        connection.user.id, msg["item_id"], msg["due_date"], msg["date"], msg.get("amount")
     )
     return (None, True)
 
