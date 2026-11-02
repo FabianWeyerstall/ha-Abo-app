@@ -31,6 +31,8 @@ from .engine import (
     SHIFT_PREVIOUS,
     STATUS_BOOKED,
     STATUS_SKIPPED,
+    UNIT_MONTHS,
+    UNIT_WEEKS,
     parse_date,
 )
 
@@ -246,6 +248,33 @@ class Book:
         # Keep the history short; the certainty only looks at the last few.
         item["confirmations"] = confirmations[-24:]
 
+    def plan(
+        self,
+        user_id: str,
+        item_id: str,
+        due_date: str,
+        planned_date: str | None,
+        amount: float | None = None,
+    ) -> None:
+        """Fix the date (and optionally amount) of one booking, or clear it."""
+        item = self.data["items"].get(item_id)
+        if item is None or not self.can_see(user_id, item):
+            raise AccessError("item")
+        _check_date(due_date, "due_date")
+        overrides = [o for o in item.get("overrides", []) if o["due_date"] != due_date]
+        if planned_date:
+            _check_date(planned_date, "date")
+            try:
+                amount = None if amount is None else abs(float(amount))
+            except (TypeError, ValueError) as err:
+                raise ValidationError("amount") from err
+            overrides.append(
+                {"due_date": due_date, "date": planned_date, "amount": amount, "by": user_id}
+            )
+        overrides.sort(key=lambda o: o["due_date"])
+        # Planned appointments far in the past are no longer needed.
+        item["overrides"] = overrides[-36:]
+
 
 def _check_date(value: Any, field: str) -> None:
     try:
@@ -287,6 +316,9 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("interval") from err
     if not 1 <= interval <= 120:
         raise ValidationError("interval")
+    unit = schedule.get("unit") or UNIT_MONTHS
+    if unit not in (UNIT_MONTHS, UNIT_WEEKS):
+        raise ValidationError("unit")
     dates: list[str] = []
     if frequency == "fixed_dates":
         for month_day in schedule.get("dates") or []:
@@ -315,7 +347,12 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         "icon": str(values.get("icon") or "")[:80],
         "start_date": values["start_date"],
         "end_date": end_date,
-        "schedule": {"frequency": frequency, "interval": interval, "dates": sorted(set(dates))},
+        "schedule": {
+            "frequency": frequency,
+            "interval": interval,
+            "dates": sorted(set(dates)),
+            **({"unit": unit} if frequency == "rolling" else {}),
+        },
         "date_tolerance_days": tolerance,
         "weekend_shift": shift,
         "certainty": certainty,

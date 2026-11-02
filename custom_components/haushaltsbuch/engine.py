@@ -19,7 +19,12 @@ FREQ_WEEKLY = "weekly"
 FREQ_MONTHLY = "monthly"
 FREQ_YEARLY = "yearly"
 FREQ_FIXED_DATES = "fixed_dates"
-FREQUENCIES = (FREQ_ONCE, FREQ_WEEKLY, FREQ_MONTHLY, FREQ_YEARLY, FREQ_FIXED_DATES)
+# Next booking follows the last actual or planned one (e.g. a haircut).
+FREQ_ROLLING = "rolling"
+FREQUENCIES = (FREQ_ONCE, FREQ_WEEKLY, FREQ_MONTHLY, FREQ_YEARLY, FREQ_FIXED_DATES, FREQ_ROLLING)
+
+UNIT_MONTHS = "months"
+UNIT_WEEKS = "weeks"
 
 SHIFT_NEXT = "next"
 SHIFT_PREVIOUS = "previous"
@@ -155,6 +160,52 @@ def nominal_dates(item: dict[str, Any], until: date) -> Iterable[date]:
             year += 1
 
 
+def _rolling_step(day: date, interval: int, unit: str) -> date:
+    if unit == UNIT_WEEKS:
+        return day + timedelta(weeks=interval)
+    return _add_months(day, interval, day.day)
+
+
+def rolling_keys(item: dict[str, Any], until: date) -> list[date]:
+    """Keys (nominal dates) of a rolling schedule up to `until`.
+
+    Every booked confirmation and every planned appointment is an anchor at its
+    real date. After the last anchor the schedule continues every interval;
+    between anchors that lie far apart the gap is filled the same way.
+    """
+    schedule = item.get("schedule") or {}
+    interval = max(1, int(schedule.get("interval") or 1))
+    unit = schedule.get("unit") or UNIT_MONTHS
+    start = parse_date(item.get("start_date"))
+    end = parse_date(item.get("end_date"))
+    if start is None:
+        return []
+    limit = min(until, end) if end else until
+
+    anchors: dict[date, date] = {start: start}
+    for override in item.get("overrides") or []:
+        anchors[parse_date(override["due_date"])] = parse_date(override["date"])
+    for conf in item.get("confirmations") or []:
+        key = parse_date(conf["due_date"])
+        if conf["status"] == STATUS_BOOKED and conf.get("actual_date"):
+            anchors[key] = parse_date(conf["actual_date"])
+        else:
+            anchors.setdefault(key, key)
+
+    ordered = sorted(anchors.items(), key=lambda kv: (kv[1], kv[0]))
+    half = timedelta(days=(4 if unit == UNIT_WEEKS else 15) * interval)
+    keys: list[date] = []
+    for index, (key, real) in enumerate(ordered):
+        if key <= limit or real <= limit:
+            keys.append(key)
+        nxt = ordered[index + 1][1] if index + 1 < len(ordered) else None
+        current = _rolling_step(real, interval, unit)
+        while current <= limit and (nxt is None or current <= nxt - half):
+            keys.append(current)
+            current = _rolling_step(current, interval, unit)
+    return keys
+
+
 def default_shift(item: dict[str, Any]) -> str:
     """Bookings due on a weekend or bank holiday move to the next business day.
 
@@ -192,7 +243,7 @@ def certainty_for(item: dict[str, Any], due: date) -> str:
         return UNSURE
     if variance > 0 or tolerance > 3:
         return LIKELY
-    if (item.get("schedule") or {}).get("frequency") == FREQ_ONCE:
+    if (item.get("schedule") or {}).get("frequency") in (FREQ_ONCE, FREQ_ROLLING):
         return LIKELY
     booked = [c for c in recent if c["status"] == STATUS_BOOKED]
     if not booked:
@@ -226,6 +277,7 @@ class Occurrence:
     certainty: str
     status: str | None = None  # booked / skipped / None (open)
     household_id: str | None = None
+    planned: bool = False  # date fixed by hand ("Termin festlegen")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -241,6 +293,7 @@ class Occurrence:
             "certainty": self.certainty,
             "status": self.status,
             "household_id": self.household_id,
+            "planned": self.planned,
         }
 
 
@@ -251,17 +304,34 @@ def occurrences(
     result: list[Occurrence] = []
     for item in items:
         confirmations = {c["due_date"]: c for c in item.get("confirmations") or []}
-        shift = default_shift(item)
+        overrides = {o["due_date"]: o for o in item.get("overrides") or []}
+        rolling = (item.get("schedule") or {}).get("frequency") == FREQ_ROLLING
+        # Rolling items are appointments paid on the day, so they are not shifted.
+        shift = SHIFT_NONE if rolling else default_shift(item)
         sign = 1 if item.get("direction") == INCOME else -1
-        # Shifting can move a date a few days, so look slightly beyond the range.
-        for nominal in nominal_dates(item, end + timedelta(days=7)):
+        horizon = end + timedelta(days=7)  # shifting can move a date a few days
+        keys = rolling_keys(item, horizon) if rolling else nominal_dates(item, horizon)
+        for nominal in keys:
             conf = confirmations.get(nominal.isoformat())
+            override = overrides.get(nominal.isoformat())
+            planned = False
             if conf and conf["status"] == STATUS_BOOKED:
-                when = parse_date(conf.get("actual_date")) or shift_to_business_day(nominal, shift)
+                when = (
+                    parse_date(conf.get("actual_date"))
+                    or (parse_date(override["date"]) if override else None)
+                    or shift_to_business_day(nominal, shift)
+                )
                 amount = conf.get("actual_amount")
                 amount = float(item.get("amount") or 0) if amount is None else float(amount)
                 certainty = SURE
                 status = STATUS_BOOKED
+            elif override:
+                when = parse_date(override["date"])
+                amount = override.get("amount")
+                amount = float(item.get("amount") or 0) if amount is None else float(amount)
+                certainty = SURE
+                status = conf["status"] if conf else None
+                planned = True
             else:
                 when = shift_to_business_day(nominal, shift)
                 amount = float(item.get("amount") or 0)
@@ -283,6 +353,7 @@ def occurrences(
                     certainty=certainty,
                     status=status,
                     household_id=item.get("household_id"),
+                    planned=planned,
                 )
             )
     result.sort(key=lambda o: (o.date, o.amount, o.name))

@@ -67,6 +67,21 @@ async def test_websocket_flow_and_privacy(
     entries = [e for d in res["result"]["days"] for e in d["entries"]]
     assert entries and entries[0]["name"] == "Netflix"
 
+    # Fix the next booking as an appointment; it is then marked as planned
+    first = entries[0]
+    await anna.send_json_auto_id(
+        {"type": f"{DOMAIN}/plan", "item_id": item_id, "due_date": first["due_date"],
+         "date": (today + timedelta(days=3)).isoformat(), "amount": 15}
+    )
+    assert (await anna.receive_json())["success"]
+    await anna.send_json_auto_id(
+        {"type": f"{DOMAIN}/forecast", "scope": "me", "start": today.isoformat(),
+         "end": (today + timedelta(days=10)).isoformat()}
+    )
+    res = await anna.receive_json()
+    planned = [e for d in res["result"]["days"] for e in d["entries"] if e["planned"]]
+    assert planned and planned[0]["amount"] == -15
+
     # Ben (another user, read-only in HA) sees none of Anna's private data
     await ben.send_json_auto_id({"type": f"{DOMAIN}/state"})
     res = await ben.receive_json()

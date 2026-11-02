@@ -164,3 +164,46 @@ def test_month_summaries():
     assert jan["month"] == "2026-01"
     assert jan["income"] == 3000 and jan["expense"] == 100 and jan["net"] == 2900
     assert feb["uncertain_expense"] == 50
+
+
+def rolling(**kw):
+    return item(start_date="2026-11-10", schedule={"frequency": "rolling", "interval": 1, "unit": "months"}, **kw)
+
+
+def dates_of(it, start="2026-11-01", end="2027-03-31"):
+    return [o.date.isoformat() for o in occurrences([it], date.fromisoformat(start), date.fromisoformat(end))]
+
+
+def test_rolling_runs_monthly_without_appointments():
+    assert dates_of(rolling()) == ["2026-11-10", "2026-12-10", "2027-01-10", "2027-02-10", "2027-03-10"]
+
+
+def test_rolling_planned_appointment_moves_following_ones():
+    it = rolling(overrides=[{"due_date": "2026-12-10", "date": "2026-12-19", "amount": None}])
+    assert dates_of(it) == ["2026-11-10", "2026-12-19", "2027-01-19", "2027-02-19", "2027-03-19"]
+    occ = occurrences([it], date(2026, 12, 1), date(2027, 1, 31))
+    assert [(o.planned, o.certainty) for o in occ] == [(True, SURE), (False, LIKELY)]
+
+
+def test_rolling_late_visit_shifts_schedule():
+    # went 5 weeks later than planned
+    it = rolling(confirmations=[{"due_date": "2026-11-10", "status": "booked", "actual_date": "2026-12-15", "actual_amount": 32}])
+    assert dates_of(it) == ["2026-12-15", "2027-01-15", "2027-02-15", "2027-03-15"]
+
+
+def test_rolling_keeps_gap_before_a_later_appointment():
+    # appointment fixed for the 3rd visit, the 2nd stays in between
+    it = rolling(overrides=[{"due_date": "2027-01-10", "date": "2027-01-20", "amount": 40}])
+    assert dates_of(it) == ["2026-11-10", "2026-12-10", "2027-01-20", "2027-02-20", "2027-03-20"]
+    jan = [o for o in occurrences([it], date(2027, 1, 1), date(2027, 1, 31))][0]
+    assert jan.amount == -40
+
+
+def test_rolling_in_weeks_and_end_date():
+    it = item(start_date="2026-11-02", end_date="2026-12-31", schedule={"frequency": "rolling", "interval": 5, "unit": "weeks"})
+    assert dates_of(it) == ["2026-11-02", "2026-12-07"]
+
+
+def test_override_moves_single_fixed_booking_only():
+    it = item(start_date="2026-11-15", overrides=[{"due_date": "2026-12-15", "date": "2026-12-22", "amount": None}])
+    assert dates_of(it, end="2027-01-31") == ["2026-11-16", "2026-12-22", "2027-01-15"]

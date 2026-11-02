@@ -106,3 +106,26 @@ def test_confirm_reset():
     assert len(book.data["items"][it]["confirmations"]) == 1
     book.confirm("anna", it, "2026-11-15", None)
     assert book.data["items"][it]["confirmations"] == []
+
+
+def test_plan_and_clear_appointment():
+    book = Book()
+    it = book.save_item("anna", {**ITEM, "schedule": {"frequency": "rolling", "interval": 5, "unit": "weeks"}})
+    assert book.data["items"][it]["schedule"]["unit"] == "weeks"
+    book.plan("anna", it, "2026-12-20", "2026-12-23", 30)
+    assert book.data["items"][it]["overrides"][0]["date"] == "2026-12-23"
+    with pytest.raises(AccessError):
+        book.plan("ben", it, "2026-12-20", "2026-12-24")
+    with pytest.raises(ValidationError):
+        book.plan("anna", it, "2026-12-20", "23.12.2026")
+    book.plan("anna", it, "2026-12-20", None)
+    assert book.data["items"][it]["overrides"] == []
+    # saving the item again keeps planned appointments
+    book.plan("anna", it, "2026-12-20", "2026-12-23")
+    book.save_item("anna", {**ITEM, "id": it, "schedule": {"frequency": "rolling", "interval": 4, "unit": "weeks"}})
+    assert len(book.data["items"][it]["overrides"]) == 1
+
+
+def test_rolling_unit_validation():
+    with pytest.raises(ValidationError):
+        Book().save_item("anna", {**ITEM, "schedule": {"frequency": "rolling", "unit": "days"}})
