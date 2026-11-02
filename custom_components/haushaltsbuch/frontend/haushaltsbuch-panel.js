@@ -55,6 +55,13 @@ function presetOf(schedule) {
   return "once";
 }
 
+// Items that are booked every month (or more often) are the "normal" ones in
+// the month view; everything else is a special item that stands out.
+function isRegular(item) {
+  const preset = presetOf(item?.schedule);
+  return preset === "monthly" || preset === "weekly" || preset === "rolling";
+}
+
 function scheduleLabel(item) {
   const s = item.schedule || {};
   const preset = presetOf(s);
@@ -306,14 +313,14 @@ class HaushaltsbuchPanel extends HTMLElement {
     </div>`;
   }
 
-  _renderEntry(e, { showBalance = false, confirm = false } = {}) {
+  _renderEntry(e, { showBalance = false, confirm = false, special = null } = {}) {
     const owner = this._isHousehold() ? `<span class="owner">${esc(e.owner_name)}</span>` : "";
     const status = e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : e.planned ? `<span class="chip planned">Termin</span>` : this._chip(e.certainty);
     return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="open-entry" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}" data-planned="${e.planned ? "1" : ""}">
       <div class="entry-icon">${this._icon(e.icon)}</div>
       <div class="entry-main">
         <div class="entry-name">${esc(e.name)}</div>
-        <div class="entry-meta">${esc(e.category)} ${owner} ${status}</div>
+        <div class="entry-meta">${special ? `<span class="chip special">★ ${esc(scheduleLabel(special))}</span> ` : ""}${esc(e.category)} ${owner} ${status}</div>
       </div>
       <div class="entry-amount ${e.amount < 0 ? "neg" : "pos"}">${this._money(e.amount, true)}</div>
       ${confirm ? `<div class="entry-actions">
@@ -435,6 +442,7 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderMonths() {
     const rows = this._summary || [];
+    const itemsById = Object.fromEntries(this._state.items.map((i) => [i.id, i]));
     const max = Math.max(1, ...rows.map((r) => Math.max(r.income + r.uncertain_income, r.expense + r.uncertain_expense)));
     const barLine = (sure, unsure, cls) => {
       const label = [sure ? this._money(sure) : "", unsure ? `+ ${this._money(unsure)} unsicher` : ""].filter(Boolean).join(" ");
@@ -442,12 +450,17 @@ class HaushaltsbuchPanel extends HTMLElement {
     };
     return `<div class="card">
       <h3>Monatsübersicht</h3>
-      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.</p>
+      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. <span class="special-pill inline">★ Sonderposten</span> sind alles, was nicht jeden Monat kommt (vierteljährlich, jährlich, einmalig …). Tippe auf einen Monat für die einzelnen Buchungen.</p>
       <div class="months">
         ${rows
           .map((r) => {
             const [y, m] = r.month.split("-").map(Number);
             const open = this._openMonth === r.month;
+            const entries = r.entries || [];
+            const special = entries.filter((e) => !isRegular(itemsById[e.item_id]));
+            const regular = entries.filter((e) => isRegular(itemsById[e.item_id]));
+            const specialSum = special.reduce((a, e) => a + e.amount, 0);
+            const entryRow = (e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: !isRegular(itemsById[e.item_id]) && itemsById[e.item_id] })}`;
             return `<div class="month-block">
               <button class="month-row ${open ? "open" : ""}" data-action="toggle-month" data-month="${r.month}" aria-expanded="${open}">
                 <div class="month-name">${MONTHS[m - 1].slice(0, 3)} ${String(y).slice(2)}</div>
@@ -456,10 +469,13 @@ class HaushaltsbuchPanel extends HTMLElement {
                   ${barLine(r.expense, r.uncertain_expense, "neg-bg")}
                 </div>
                 <div class="month-net ${r.net < 0 ? "neg" : "pos"}">${this._money(r.net, true)}</div>
+                ${special.length ? `<div class="month-specials">${special
+                  .map((e) => `<span class="special-pill ${e.amount < 0 ? "" : "income"}">${this._icon(e.icon, 14)}<span>${esc(e.name)}</span><b>${this._money(e.amount, true)}</b></span>`)
+                  .join("")}</div>` : ""}
               </button>
-              ${open ? `<div class="month-entries">${(r.entries || []).length ? r.entries
-                .map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e })}`)
-                .join("") : `<div class="empty">Keine Buchungen in diesem Monat.</div>`}</div>` : ""}
+              ${open ? `<div class="month-entries">${entries.length ? `
+                ${special.length ? `<div class="month-section special">★ Sonderposten diesen Monat <b>${this._money(specialSum, true)}</b></div>${special.map(entryRow).join("")}` : ""}
+                ${regular.length ? `<div class="month-section">Laufende Posten (jeden Monat)</div>${regular.map(entryRow).join("")}` : ""}` : `<div class="empty">Keine Buchungen in diesem Monat.</div>`}</div>` : ""}
             </div>`;
           })
           .join("")}
@@ -1001,6 +1017,15 @@ const STYLES = `
   .chip.booked { --chip: var(--success-color, #43a047); }
   .chip.skipped { --chip: var(--secondary-text-color); }
   .chip.shared { --chip: var(--primary-color); }
+  .chip.special { --chip: var(--warning-color, #ffa600); background: var(--chip); color: #000; border: none; }
+  .month-specials { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 64px; }
+  .special-pill { display: inline-flex; align-items: center; gap: 4px; background: rgba(255, 166, 0, 0.18); border-left: 3px solid var(--warning-color, #ffa600); color: var(--primary-text-color); border-radius: 6px; padding: 1px 8px 1px 6px; font-size: 12px; line-height: 20px; }
+  .special-pill b { font-weight: 500; color: var(--error-color, #db4437); font-variant-numeric: tabular-nums; }
+  .special-pill.income b { color: var(--success-color, #43a047); }
+  .special-pill ha-icon { color: var(--warning-color, #ffa600); }
+  .special-pill.inline { padding: 0 6px; }
+  .month-section { display: flex; justify-content: space-between; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color); padding: 12px 4px 0; }
+  .month-section.special { color: var(--warning-color, #c77c00); }
   .chip.planned { --chip: var(--success-color, #43a047); background: var(--chip); color: var(--text-primary-color, #fff); }
   .inline-fields { display: flex; gap: 8px; }
   .inline-fields input { width: 80px; flex: none; }
@@ -1074,6 +1099,7 @@ const STYLES = `
     .tab ha-icon { display: none; }
     .tab { padding: 10px 8px; font-size: 13px; }
     .month-row { grid-template-columns: 48px 1fr 80px; }
+    .month-specials { padding-left: 0; }
   }
 `;
 
