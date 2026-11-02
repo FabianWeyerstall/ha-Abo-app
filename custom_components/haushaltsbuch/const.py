@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -67,5 +67,6 @@ TEMPLATES = [
     {"name": "Cookidoo", "direction": "expense", "category": "Abos", "icon": "mdi:pot-steam", "frequency": "yearly"},
     {"name": "Friseur", "direction": "expense", "category": "Gesundheit & Pflege", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
     {"name": "Kindergarten", "direction": "expense", "category": "Kinder", "icon": "mdi:human-male-child", "frequency": "monthly"},
+    {"name": "Tanken", "direction": "expense", "category": "Auto", "icon": "mdi:gas-station", "frequency": "rolling", "interval": 2, "unit": "weeks", "amount_variance_pct": 20},
     {"name": "Räderwechsel", "direction": "expense", "category": "Auto", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
 ]

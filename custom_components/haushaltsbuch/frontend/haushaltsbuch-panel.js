@@ -914,7 +914,8 @@ class HaushaltsbuchPanel extends HTMLElement {
           certainty: t.certainty || null,
           date_tolerance_days: t.date_tolerance_days || 0,
           weekend_shift: t.weekend_shift || null,
-          schedule: { frequency: t.frequency, interval: t.interval || 1, dates: t.dates || [] },
+          amount_variance_pct: t.amount_variance_pct || 0,
+          schedule: { frequency: t.frequency, interval: t.interval || 1, dates: t.dates || [], ...(t.unit ? { unit: t.unit } : {}) },
         };
         this._dialog.preset = presetOf(this._dialog.item.schedule);
         this._render();
