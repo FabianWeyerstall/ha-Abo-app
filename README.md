@@ -14,7 +14,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Ausgaben rutschen auf den nächsten, Einnahmen auf den vorherigen Bankarbeitstag
 - **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate
-- **Vorlagen** für typische Posten (GEZ, Strom, Versicherungen, Kfz-Steuer, Netflix, Gehalt, Räderwechsel …)
+- **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Gehalt, Räderwechsel …)
 
 ## Nutzer und Haushaltsbuch
 
