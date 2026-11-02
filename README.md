@@ -14,7 +14,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
 - **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat hervorgehoben
-- **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Prime, Disney+, Gehalt, Räderwechsel …)
+- **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Prime, Disney+, Gehalt, Tanken, Räderwechsel …)
 - **Export und Import** der eigenen Posten als JSON-Datei, z.B. als Sicherung oder zum Umzug auf eine andere HA-Instanz. Beim Import wählbar: hinzufügen (Doppelte werden übersprungen) oder ersetzen
 
 ## Nutzer und Haushaltsbuch
@@ -24,6 +24,62 @@ Jeder Home-Assistant-Nutzer hat seine eigenen, privaten Posten und seinen eigene
 - Nur der Besitzer kann einen Posten ändern, Mitglieder dürfen gemeinsame Buchungen bestätigen.
 - Auch HA-Admins sehen keine privaten Posten anderer Nutzer.
 - Optional pro Haushalt: ein **Kalender** und **Sensoren** (nächste Ausgabe, nächste Einnahme, Kontostand zum Monatsende) für Dashboards und Automationen. Diese Entitäten sind für alle HA-Nutzer sichtbar, daher standardmäßig aus.
+
+## Anleitung
+
+### 1. Kontostand setzen
+
+Tab **Zeitleiste** → **Kontostand setzen**. Trag den aktuellen Stand aus deiner Banking-App ein. Ab diesem Stand rechnet die Zeitleiste den erwarteten Kontostand Tag für Tag weiter. Gelegentlich neu setzen, dann bleibt die Vorschau genau.
+
+### 2. Posten anlegen
+
+Tab **Posten** → **+ Neuer Posten**.
+
+1. Oben eine **Vorlage** antippen (z.B. GEZ, Gehalt, Netflix). Sie füllt Name, Kategorie, Symbol und Turnus aus.
+2. **Betrag** und **Erste Fälligkeit** (die nächste Abbuchung) eintragen.
+3. Den **Turnus** prüfen:
+   - *monatlich, vierteljährlich, halbjährlich, jährlich, alle X Monate*: fester Kalendertag, z.B. GEZ am 15. jedes dritten Monats
+   - *feste Termine im Jahr*: mehrere Daten pro Jahr, z.B. Räderwechsel im April und Oktober
+   - *gleitend*: der nächste Termin richtet sich nach dem letzten, z.B. Friseur oder Tanken
+   - *einmalig*: z.B. Bonus oder eine Rechnung
+4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
+5. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
+
+Das **Symbol** ist eine MDI-Bezeichnung wie `mdi:netflix` (Übersicht auf [pictogrammers.com](https://pictogrammers.com/library/mdi/)) oder einfach ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
+
+### 3. Buchungen bestätigen
+
+Was in den letzten drei Wochen fällig war, steht in der Zeitleiste unter **Zu bestätigen**. Tippe auf **gebucht** oder **ausgefallen**. Wer eine Buchung antippt, kann auch das echte Datum und den echten Betrag eintragen. Pünktlich bestätigte Posten werden mit der Zeit *sicher*.
+
+### 4. Termin festlegen
+
+Eine einzelne Buchung antippen → Datum und Betrag ändern → **Als Termin festlegen**. Bei normalen Posten wird nur diese eine Buchung verschoben. Bei gleitenden Posten rücken alle folgenden Termine mit. Beispiel: Friseur monatlich ab dem 10., du hast aber erst am 19. einen Termin bekommen. Dann rutschen auch die nächsten Besuche auf den 19.
+
+### Beispiel: Tanken
+
+Tanken ist unregelmäßig, deshalb am besten **gleitend** und **pro Auto ein Posten**:
+
+1. Vorlage **Tanken** wählen (gleitend, alle 2 Wochen, Betrag schwankt um 20 %)
+2. Namen anpassen, z.B. „Tanken Golf“, und einen typischen Betrag pro Tankfüllung eintragen
+3. Tankst du ungefähr einmal im Monat, den Abstand auf 4 Wochen oder 1 Monat stellen
+4. Nach dem Tanken die Buchung als **gebucht** bestätigen, gern mit echtem Datum und Betrag. Die nächste Tankfüllung wird dann ab diesem Tag neu berechnet.
+
+Wer das Tanken nicht einzeln pflegen will, legt stattdessen einen monatlichen Posten „Tanken“ mit dem durchschnittlichen Monatsbetrag an.
+
+### 5. Ansichten
+
+- **Zeitleiste**: alle Buchungen der nächsten 7, 30 oder 90 Tage mit erwartetem Kontostand. Zwei Linien: nur sichere Buchungen sowie sichere und wahrscheinliche zusammen.
+- **Kalender**: Monatsansicht, ein Tag antippen zeigt seine Buchungen.
+- **Posten**: alle Posten nach Kategorie, mit Summen pro Monat und Jahr (umgerechnet).
+- **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind alles, was nicht jeden Monat kommt. Einen Monat antippen zeigt die einzelnen Buchungen.
+
+### 6. Gemeinsames Haushaltsbuch
+
+Tab **Haushalt** → **+ Haushalt anlegen**, Namen vergeben und andere HA-Nutzer auswählen. Danach beim Bearbeiten eines Postens unter **Sichtbar für** den Haushalt wählen. Oben rechts wechselst du zwischen „Meine Posten“ und dem Haushalt. Der Haushalt hat einen eigenen Kontostand, z.B. für ein Gemeinschaftskonto.
+
+### 7. Sichern und umziehen
+
+Tab **Posten** → **Exportieren** speichert deine eigenen Posten als JSON-Datei (auf dem iPhone über das Teilen-Menü, „In Dateien sichern“). **Importieren** liest so eine Datei wieder ein, wahlweise zusätzlich zu den vorhandenen Posten oder als Ersatz. Importierte Posten sind zunächst privat.
 
 ## Installation über HACS
 
