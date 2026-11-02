@@ -1,0 +1,118 @@
+"""Setup, panel, WebSocket API and entities inside a test Home Assistant."""
+from datetime import date, timedelta
+
+from homeassistant.components import frontend
+from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.haushaltsbuch.const import DOMAIN, PANEL_URL_PATH
+
+
+async def _setup(hass: HomeAssistant) -> MockConfigEntry:
+    assert await async_setup_component(hass, "http", {})
+    entry = MockConfigEntry(domain=DOMAIN, title="Haushaltsbuch")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_setup_registers_panel(hass: HomeAssistant, hass_ws_client) -> None:
+    entry = await _setup(hass)
+    assert PANEL_URL_PATH in hass.data[frontend.DATA_PANELS]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert PANEL_URL_PATH not in hass.data[frontend.DATA_PANELS]
+
+
+async def test_websocket_flow_and_privacy(
+    hass: HomeAssistant, hass_ws_client, hass_admin_user, hass_read_only_user, hass_read_only_access_token
+) -> None:
+    await _setup(hass)
+    anna = await hass_ws_client(hass)  # admin user
+    ben = await hass_ws_client(hass, hass_read_only_access_token)
+    today = date.today()
+
+    await anna.send_json_auto_id(
+        {
+            "type": f"{DOMAIN}/item/save",
+            "item": {
+                "name": "Netflix",
+                "direction": "expense",
+                "amount": 13.99,
+                "category": "TV & Streaming",
+                "icon": "mdi:netflix",
+                "start_date": today.isoformat(),
+                "schedule": {"frequency": "monthly", "interval": 1},
+            },
+        }
+    )
+    res = await anna.receive_json()
+    assert res["success"], res
+    item_id = res["result"]["id"]
+
+    await anna.send_json_auto_id({"type": f"{DOMAIN}/balance", "scope": "me", "balance": 1000})
+    assert (await anna.receive_json())["success"]
+
+    await anna.send_json_auto_id(
+        {
+            "type": f"{DOMAIN}/forecast",
+            "scope": "me",
+            "start": today.isoformat(),
+            "end": (today + timedelta(days=40)).isoformat(),
+        }
+    )
+    res = await anna.receive_json()
+    assert res["success"], res
+    entries = [e for d in res["result"]["days"] for e in d["entries"]]
+    assert entries and entries[0]["name"] == "Netflix"
+
+    # Ben (another user, read-only in HA) sees none of Anna's private data
+    await ben.send_json_auto_id({"type": f"{DOMAIN}/state"})
+    res = await ben.receive_json()
+    assert res["success"], res
+    assert res["result"]["items"] == []
+    await ben.send_json_auto_id({"type": f"{DOMAIN}/item/delete", "item_id": item_id})
+    res = await ben.receive_json()
+    assert not res["success"] and res["error"]["code"] == "unauthorized"
+
+    # Anna shares it through a household with Ben and switches entities on
+    await anna.send_json_auto_id(
+        {"type": f"{DOMAIN}/household/create", "name": "Zuhause", "members": [hass_read_only_user.id]}
+    )
+    res = await anna.receive_json()
+    household_id = res["result"]["id"]
+    await anna.send_json_auto_id(
+        {"type": f"{DOMAIN}/item/save", "item": {**_item(today), "id": item_id, "household_id": household_id}}
+    )
+    assert (await anna.receive_json())["success"]
+    await anna.send_json_auto_id(
+        {"type": f"{DOMAIN}/household/update", "household_id": household_id, "entities": True}
+    )
+    assert (await anna.receive_json())["success"]
+    await hass.async_block_till_done()
+
+    await ben.send_json_auto_id({"type": f"{DOMAIN}/state"})
+    res = await ben.receive_json()
+    assert [i["id"] for i in res["result"]["items"]] == [item_id]
+    assert res["result"]["items"][0]["editable"] is False
+    await ben.send_json_auto_id({"type": f"{DOMAIN}/summary", "scope": household_id, "months": 2})
+    res = await ben.receive_json()
+    assert res["success"] and len(res["result"]) == 2
+
+    calendars = hass.states.async_entity_ids("calendar")
+    sensors = hass.states.async_entity_ids("sensor")
+    assert len(calendars) == 1
+    assert len(sensors) == 3
+
+
+def _item(today: date) -> dict:
+    return {
+        "name": "Netflix",
+        "direction": "expense",
+        "amount": 13.99,
+        "category": "TV & Streaming",
+        "icon": "mdi:netflix",
+        "start_date": today.isoformat(),
+        "schedule": {"frequency": "monthly", "interval": 1},
+    }

@@ -1,0 +1,324 @@
+"""Persistent data and access rules.
+
+Layout of the stored document::
+
+    {
+      "users": {user_id: {"balance": float|None, "balance_date": "YYYY-MM-DD"|None}},
+      "items": {item_id: {..., "owner": user_id, "household_id": str|None,
+                          "confirmations": [...]}},
+      "households": {household_id: {"name": str, "members": [user_id],
+                                    "created_by": user_id, "balance": float|None,
+                                    "balance_date": str|None, "entities": bool}},
+    }
+
+Every read and write goes through a user id. A user sees their own items and the
+items shared into a household they belong to. Only the owner can change an item.
+Being a Home Assistant admin grants nothing extra.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Any
+from uuid import uuid4
+
+from .engine import (
+    CERTAINTIES,
+    EXPENSE,
+    FREQUENCIES,
+    INCOME,
+    SHIFT_NEXT,
+    SHIFT_NONE,
+    SHIFT_PREVIOUS,
+    STATUS_BOOKED,
+    STATUS_SKIPPED,
+    parse_date,
+)
+
+
+class AccessError(Exception):
+    """The user may not see or change this object."""
+
+
+class ValidationError(Exception):
+    """The submitted data is invalid."""
+
+
+def empty_data() -> dict[str, Any]:
+    return {"users": {}, "items": {}, "households": {}}
+
+
+ITEM_FIELDS = {
+    "name",
+    "direction",
+    "amount",
+    "amount_variance_pct",
+    "category",
+    "icon",
+    "start_date",
+    "end_date",
+    "schedule",
+    "date_tolerance_days",
+    "weekend_shift",
+    "certainty",
+    "note",
+    "household_id",
+}
+
+
+class Book:
+    """In-memory data with access rules. Persisting is done by the caller."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self.data = data or empty_data()
+        for key, value in empty_data().items():
+            self.data.setdefault(key, value)
+
+    # ---------------------------------------------------------------- users
+    def user(self, user_id: str) -> dict[str, Any]:
+        return self.data["users"].setdefault(
+            user_id, {"balance": None, "balance_date": None}
+        )
+
+    def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:
+        _check_date(balance_date, "balance_date")
+        user = self.user(user_id)
+        user["balance"] = float(balance)
+        user["balance_date"] = balance_date
+
+    # ----------------------------------------------------------- households
+    def households_for(self, user_id: str) -> list[dict[str, Any]]:
+        return [
+            {"id": hid, **hh}
+            for hid, hh in self.data["households"].items()
+            if user_id in hh["members"]
+        ]
+
+    def household(self, user_id: str, household_id: str) -> dict[str, Any]:
+        household = self.data["households"].get(household_id)
+        if household is None or user_id not in household["members"]:
+            raise AccessError("household")
+        return household
+
+    def create_household(self, user_id: str, name: str, members: list[str]) -> str:
+        name = (name or "").strip()
+        if not name:
+            raise ValidationError("name")
+        household_id = uuid4().hex
+        self.data["households"][household_id] = {
+            "name": name,
+            "members": sorted({user_id, *members}),
+            "created_by": user_id,
+            "balance": None,
+            "balance_date": None,
+            "entities": False,
+        }
+        return household_id
+
+    def update_household(
+        self,
+        user_id: str,
+        household_id: str,
+        name: str | None = None,
+        members: list[str] | None = None,
+        entities: bool | None = None,
+    ) -> None:
+        household = self.household(user_id, household_id)
+        if name is not None:
+            if not name.strip():
+                raise ValidationError("name")
+            household["name"] = name.strip()
+        if members is not None:
+            if household["created_by"] != user_id:
+                raise AccessError("members")
+            new_members = sorted({household["created_by"], *members})
+            removed = set(household["members"]) - set(new_members)
+            household["members"] = new_members
+            # Items of people who left become private again.
+            for item in self.data["items"].values():
+                if item.get("household_id") == household_id and item["owner"] in removed:
+                    item["household_id"] = None
+        if entities is not None:
+            household["entities"] = bool(entities)
+
+    def leave_household(self, user_id: str, household_id: str) -> None:
+        household = self.household(user_id, household_id)
+        if household["created_by"] == user_id:
+            raise ValidationError("creator_cannot_leave")
+        self.update_household(
+            household["created_by"],
+            household_id,
+            members=[m for m in household["members"] if m != user_id],
+        )
+
+    def delete_household(self, user_id: str, household_id: str) -> None:
+        household = self.household(user_id, household_id)
+        if household["created_by"] != user_id:
+            raise AccessError("delete")
+        for item in self.data["items"].values():
+            if item.get("household_id") == household_id:
+                item["household_id"] = None
+        del self.data["households"][household_id]
+
+    def set_household_balance(
+        self, user_id: str, household_id: str, balance: float, balance_date: str
+    ) -> None:
+        _check_date(balance_date, "balance_date")
+        household = self.household(user_id, household_id)
+        household["balance"] = float(balance)
+        household["balance_date"] = balance_date
+
+    # ---------------------------------------------------------------- items
+    def can_see(self, user_id: str, item: dict[str, Any]) -> bool:
+        if item["owner"] == user_id:
+            return True
+        household = self.data["households"].get(item.get("household_id") or "")
+        return bool(household and user_id in household["members"])
+
+    def visible_items(self, user_id: str) -> list[dict[str, Any]]:
+        return [i for i in self.data["items"].values() if self.can_see(user_id, i)]
+
+    def own_items(self, user_id: str) -> list[dict[str, Any]]:
+        return [i for i in self.data["items"].values() if i["owner"] == user_id]
+
+    def household_items(self, user_id: str, household_id: str) -> list[dict[str, Any]]:
+        self.household(user_id, household_id)
+        return self.items_of_household(household_id)
+
+    def items_of_household(self, household_id: str) -> list[dict[str, Any]]:
+        return [
+            i for i in self.data["items"].values() if i.get("household_id") == household_id
+        ]
+
+    def save_item(self, user_id: str, values: dict[str, Any]) -> str:
+        item_id = values.get("id")
+        if item_id:
+            item = self.data["items"].get(item_id)
+            if item is None or item["owner"] != user_id:
+                raise AccessError("item")
+        else:
+            item_id = uuid4().hex
+            item = {"id": item_id, "owner": user_id, "confirmations": []}
+        cleaned = _validate_item({k: v for k, v in values.items() if k in ITEM_FIELDS})
+        if cleaned.get("household_id"):
+            self.household(user_id, cleaned["household_id"])
+        item.update(cleaned)
+        self.data["items"][item_id] = item
+        return item_id
+
+    def delete_item(self, user_id: str, item_id: str) -> None:
+        item = self.data["items"].get(item_id)
+        if item is None or item["owner"] != user_id:
+            raise AccessError("item")
+        del self.data["items"][item_id]
+
+    def confirm(
+        self,
+        user_id: str,
+        item_id: str,
+        due_date: str,
+        status: str | None,
+        actual_date: str | None = None,
+        actual_amount: float | None = None,
+    ) -> None:
+        """Mark one booking as booked or skipped, or reset it (status None)."""
+        item = self.data["items"].get(item_id)
+        if item is None or not self.can_see(user_id, item):
+            raise AccessError("item")
+        _check_date(due_date, "due_date")
+        confirmations = [
+            c for c in item.get("confirmations", []) if c["due_date"] != due_date
+        ]
+        if status is not None:
+            if status not in (STATUS_BOOKED, STATUS_SKIPPED):
+                raise ValidationError("status")
+            if actual_date:
+                _check_date(actual_date, "actual_date")
+            confirmations.append(
+                {
+                    "due_date": due_date,
+                    "status": status,
+                    "actual_date": actual_date or None,
+                    "actual_amount": None if actual_amount is None else abs(float(actual_amount)),
+                    "by": user_id,
+                }
+            )
+        confirmations.sort(key=lambda c: c["due_date"])
+        # Keep the history short; the certainty only looks at the last few.
+        item["confirmations"] = confirmations[-24:]
+
+
+def _check_date(value: Any, field: str) -> None:
+    try:
+        if parse_date(value) is None:
+            raise ValueError
+    except (TypeError, ValueError) as err:
+        raise ValidationError(field) from err
+
+
+def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
+    name = str(values.get("name") or "").strip()
+    if not name:
+        raise ValidationError("name")
+    direction = values.get("direction", EXPENSE)
+    if direction not in (EXPENSE, INCOME):
+        raise ValidationError("direction")
+    try:
+        amount = abs(float(values.get("amount")))
+        variance = float(values.get("amount_variance_pct") or 0)
+        tolerance = int(values.get("date_tolerance_days") or 0)
+    except (TypeError, ValueError) as err:
+        raise ValidationError("amount") from err
+    if not 0 <= variance <= 100 or not 0 <= tolerance <= 60:
+        raise ValidationError("tolerance")
+    _check_date(values.get("start_date"), "start_date")
+    end_date = values.get("end_date") or None
+    if end_date:
+        _check_date(end_date, "end_date")
+        if parse_date(end_date) < parse_date(values["start_date"]):
+            raise ValidationError("end_date")
+
+    schedule = values.get("schedule") or {}
+    frequency = schedule.get("frequency", "monthly")
+    if frequency not in FREQUENCIES:
+        raise ValidationError("frequency")
+    try:
+        interval = int(schedule.get("interval") or 1)
+    except (TypeError, ValueError) as err:
+        raise ValidationError("interval") from err
+    if not 1 <= interval <= 120:
+        raise ValidationError("interval")
+    dates: list[str] = []
+    if frequency == "fixed_dates":
+        for month_day in schedule.get("dates") or []:
+            try:
+                month, day = (int(p) for p in str(month_day).split("-"))
+                date(2024, month, day)  # leap year accepts 02-29
+            except (TypeError, ValueError) as err:
+                raise ValidationError("dates") from err
+            dates.append(f"{month:02d}-{day:02d}")
+        if not dates:
+            raise ValidationError("dates")
+
+    shift = values.get("weekend_shift") or None
+    if shift not in (None, SHIFT_NEXT, SHIFT_PREVIOUS, SHIFT_NONE):
+        raise ValidationError("weekend_shift")
+    certainty = values.get("certainty") or None
+    if certainty not in (None, *CERTAINTIES):
+        raise ValidationError("certainty")
+
+    return {
+        "name": name[:100],
+        "direction": direction,
+        "amount": round(amount, 2),
+        "amount_variance_pct": variance,
+        "category": str(values.get("category") or "Sonstiges")[:50],
+        "icon": str(values.get("icon") or "")[:80],
+        "start_date": values["start_date"],
+        "end_date": end_date,
+        "schedule": {"frequency": frequency, "interval": interval, "dates": sorted(set(dates))},
+        "date_tolerance_days": tolerance,
+        "weekend_shift": shift,
+        "certainty": certainty,
+        "note": str(values.get("note") or "")[:1000],
+        "household_id": values.get("household_id") or None,
+    }

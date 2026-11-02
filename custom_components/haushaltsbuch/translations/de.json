@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Haushaltsbuch einrichten",
+        "description": "Fügt das Haushaltsbuch in der Seitenleiste hinzu. Jeder Nutzer pflegt dort seine eigenen Posten."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Das Haushaltsbuch ist bereits eingerichtet."
+    }
+  },
+  "entity": {
+    "calendar": {
+      "due_dates": { "name": "Fälligkeiten" }
+    },
+    "sensor": {
+      "next_expense": { "name": "Nächste Ausgabe" },
+      "next_income": { "name": "Nächste Einnahme" },
+      "month_end_balance": { "name": "Kontostand Monatsende" }
+    }
+  }
+}
