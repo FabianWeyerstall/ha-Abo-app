@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -61,6 +61,8 @@ TEMPLATES = [
     {"name": "Internet", "direction": "expense", "category": "Internet & Telefon", "icon": "mdi:router-wireless", "frequency": "monthly"},
     {"name": "Handy", "direction": "expense", "category": "Internet & Telefon", "icon": "mdi:cellphone", "frequency": "monthly"},
     {"name": "Netflix", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:netflix", "frequency": "monthly"},
+    {"name": "Amazon Prime", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:shopping", "frequency": "yearly"},
+    {"name": "Disney+", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:filmstrip", "frequency": "monthly"},
     {"name": "Apple", "direction": "expense", "category": "Abos", "icon": "mdi:apple", "frequency": "monthly"},
     {"name": "Cookidoo", "direction": "expense", "category": "Abos", "icon": "mdi:pot-steam", "frequency": "yearly"},
     {"name": "Friseur", "direction": "expense", "category": "Gesundheit & Pflege", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
