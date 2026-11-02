@@ -26,6 +26,7 @@ from .engine import (
     EXPENSE,
     FREQUENCIES,
     INCOME,
+    NOTICE_UNITS,
     SHIFT_NEXT,
     SHIFT_NONE,
     SHIFT_PREVIOUS,
@@ -67,6 +68,8 @@ ITEM_FIELDS = {
     "certainty",
     "note",
     "household_id",
+    "price_changes",
+    "contract",
 }
 
 
@@ -448,6 +451,32 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         if not dates:
             raise ValidationError("dates")
 
+    price_changes = []
+    for change in values.get("price_changes") or []:
+        if not isinstance(change, dict):
+            raise ValidationError("price_changes")
+        _check_date(change.get("from"), "price_changes")
+        try:
+            new_amount = round(abs(float(change.get("amount"))), 2)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("price_changes") from err
+        price_changes.append({"from": change["from"], "amount": new_amount})
+    price_changes = sorted({c["from"]: c for c in price_changes}.values(), key=lambda c: c["from"])[-50:]
+
+    contract = None
+    raw_contract = values.get("contract") or {}
+    if raw_contract.get("end"):
+        _check_date(raw_contract["end"], "contract_end")
+        try:
+            notice = int(raw_contract.get("notice") or 0)
+            renew = int(raw_contract.get("renew_months") or 0)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("contract") from err
+        notice_unit = raw_contract.get("notice_unit") or "months"
+        if not 0 <= notice <= 365 or not 0 <= renew <= 120 or notice_unit not in NOTICE_UNITS:
+            raise ValidationError("contract")
+        contract = {"end": raw_contract["end"], "notice": notice, "notice_unit": notice_unit, "renew_months": renew}
+
     shift = values.get("weekend_shift") or None
     if shift not in (None, SHIFT_NEXT, SHIFT_PREVIOUS, SHIFT_NONE):
         raise ValidationError("weekend_shift")
@@ -468,11 +497,17 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
             "frequency": frequency,
             "interval": interval,
             "dates": sorted(set(dates)),
-            **({"unit": unit} if frequency == "rolling" else {}),
+            **(
+                {"unit": unit, "learn": schedule.get("learn") is not False}
+                if frequency == "rolling"
+                else {}
+            ),
         },
         "date_tolerance_days": tolerance,
         "weekend_shift": shift,
         "certainty": certainty,
         "note": str(values.get("note") or "")[:1000],
         "household_id": values.get("household_id") or None,
+        "price_changes": price_changes,
+        "contract": contract,
     }
