@@ -419,20 +419,30 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderMonths() {
     const rows = this._summary || [];
     const max = Math.max(1, ...rows.map((r) => Math.max(r.income + r.uncertain_income, r.expense + r.uncertain_expense)));
+    const barLine = (sure, unsure, cls) => {
+      const label = [sure ? this._money(sure) : "", unsure ? `+ ${this._money(unsure)} unsicher` : ""].filter(Boolean).join(" ");
+      return `<div class="bar-line"><span class="bar ${cls}" style="width:${(sure / max) * 100}%"></span><span class="bar ${cls} light" style="width:${(unsure / max) * 100}%"></span>${label ? `<span class="bar-value">${label}</span>` : ""}</div>`;
+    };
     return `<div class="card">
       <h3>Monatsübersicht</h3>
-      <p class="hint">Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz.</p>
+      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.</p>
       <div class="months">
         ${rows
           .map((r) => {
             const [y, m] = r.month.split("-").map(Number);
-            return `<div class="month-row">
-              <div class="month-name">${MONTHS[m - 1].slice(0, 3)} ${String(y).slice(2)}</div>
-              <div class="bars">
-                <div class="bar-line"><span class="bar pos-bg" style="width:${(r.income / max) * 100}%"></span><span class="bar pos-bg light" style="width:${(r.uncertain_income / max) * 100}%"></span><span class="bar-value">${this._money(r.income)}</span></div>
-                <div class="bar-line"><span class="bar neg-bg" style="width:${(r.expense / max) * 100}%"></span><span class="bar neg-bg light" style="width:${(r.uncertain_expense / max) * 100}%"></span><span class="bar-value">${this._money(r.expense)}</span></div>
-              </div>
-              <div class="month-net ${r.net < 0 ? "neg" : "pos"}">${this._money(r.net, true)}</div>
+            const open = this._openMonth === r.month;
+            return `<div class="month-block">
+              <button class="month-row ${open ? "open" : ""}" data-action="toggle-month" data-month="${r.month}" aria-expanded="${open}">
+                <div class="month-name">${MONTHS[m - 1].slice(0, 3)} ${String(y).slice(2)}</div>
+                <div class="bars">
+                  ${barLine(r.income, r.uncertain_income, "pos-bg")}
+                  ${barLine(r.expense, r.uncertain_expense, "neg-bg")}
+                </div>
+                <div class="month-net ${r.net < 0 ? "neg" : "pos"}">${this._money(r.net, true)}</div>
+              </button>
+              ${open ? `<div class="month-entries">${(r.entries || []).length ? r.entries
+                .map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e })}`)
+                .join("") : `<div class="empty">Keine Buchungen in diesem Monat.</div>`}</div>` : ""}
             </div>`;
           })
           .join("")}
@@ -484,6 +494,9 @@ class HaushaltsbuchPanel extends HTMLElement {
     const item = d.item;
     const preset = d.preset || presetOf(item.schedule);
     const readOnly = item.id && !item.editable;
+    // iOS shows an empty date field as today and offers no way to clear it,
+    // so the end date is only present while the checkbox is ticked.
+    const hasEnd = d.hasEnd ?? Boolean(item.end_date);
     const dis = readOnly ? "disabled" : "";
     const templates = !item.id
       ? `<div class="templates">${this._state.templates
@@ -515,7 +528,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         ${preset === "weekly" ? `<label>Alle wie viele Wochen?<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">Termine im Jahr (TT.MM., durch Komma getrennt)<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
         <label>${preset === "once" ? "Datum" : preset === "fixed_dates" ? "Gültig ab" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
-        ${preset !== "once" ? `<label>Enddatum (optional)<input name="end_date" type="date" value="${esc(item.end_date || "")}" ${dis}></label>` : ""}
+        ${preset !== "once" ? `<div class="end-date">
+          <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> Enddatum festlegen</label>
+          ${hasEnd ? `<input name="end_date" type="date" aria-label="Enddatum" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
+        </div>` : ""}
       </div>
       <details ${item.amount_variance_pct || item.date_tolerance_days || item.certainty || item.weekend_shift ? "open" : ""}>
         <summary>Schwankung und Sicherheit</summary>
@@ -527,7 +543,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             ${Object.keys(CERTAINTY).map((c) => `<option value="${c}" ${item.certainty === c ? "selected" : ""}>immer ${c}</option>`).join("")}
           </select></label>
           <label>Wochenende/Feiertag<select name="weekend_shift" ${dis}>
-            <option value="">automatisch (Ausgabe danach, Einnahme davor)</option>
+            <option value="">automatisch (nächster Bankarbeitstag)</option>
             <option value="next" ${item.weekend_shift === "next" ? "selected" : ""}>nächster Bankarbeitstag</option>
             <option value="previous" ${item.weekend_shift === "previous" ? "selected" : ""}>vorheriger Bankarbeitstag</option>
             <option value="none" ${item.weekend_shift === "none" ? "selected" : ""}>nicht verschieben</option>
@@ -638,7 +654,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       category: f.get("category"),
       icon: f.get("icon"),
       start_date: f.get("start_date"),
-      end_date: f.get("end_date") || null,
+      end_date: f.get("has_end") ? f.get("end_date") || null : null,
       schedule,
       amount_variance_pct: Number(f.get("amount_variance_pct") || 0),
       date_tolerance_days: Number(f.get("date_tolerance_days") || 0),
@@ -682,6 +698,11 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._scope = el.value;
       this._selectedDay = null;
       this._reload();
+    } else if (kind === "has_end") {
+      const form = el.closest("form");
+      this._dialog.item = this._readItemForm(form);
+      this._dialog.hasEnd = el.checked;
+      this._render();
     } else if (kind === "preset") {
       const form = el.closest("form");
       this._dialog.item = this._readItemForm(form);
@@ -719,6 +740,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._selectedDay = null;
         this._reload();
         break;
+      case "toggle-month":
+        this._openMonth = this._openMonth === target.dataset.month ? null : target.dataset.month;
+        this._render();
+        break;
       case "select-day":
         this._selectedDay = target.dataset.day;
         this._render();
@@ -752,6 +777,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           amount: t.amount ?? current.amount,
           certainty: t.certainty || null,
           date_tolerance_days: t.date_tolerance_days || 0,
+          weekend_shift: t.weekend_shift || null,
           schedule: { frequency: t.frequency, interval: t.interval || 1, dates: t.dates || [] },
         };
         this._dialog.preset = presetOf(this._dialog.item.schedule);
@@ -868,7 +894,10 @@ const STYLES = `
   .more { font-size: 10px; }
   .cal-sum { font-size: 10px; margin-top: auto; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .months { margin-top: 12px; }
-  .month-row { display: grid; grid-template-columns: 56px 1fr 96px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
+  .month-block { border-bottom: 1px solid var(--divider-color); }
+  .month-row { display: grid; grid-template-columns: 56px 1fr 96px; gap: 8px; align-items: center; padding: 8px 0; width: 100%; background: none; color: var(--primary-text-color); border-radius: 0; text-align: left; }
+  .month-row:hover, .month-row.open { background: var(--secondary-background-color); }
+  .month-entries { padding: 0 4px 8px; }
   .month-name { font-size: 13px; }
   .bar-line { display: flex; align-items: center; height: 16px; gap: 0; }
   .bar { height: 10px; display: inline-block; }
@@ -895,6 +924,7 @@ const STYLES = `
   .template { display: flex; align-items: center; gap: 4px; background: var(--secondary-background-color); color: var(--primary-text-color); white-space: nowrap; font-size: 13px; padding: 6px 10px; border-radius: 16px; }
   .icon-preview { display: inline-flex; vertical-align: middle; color: var(--primary-color); }
   .members { margin: 12px 0; }
+  .end-date { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
   .dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
   .dialog-actions > div { display: flex; gap: 8px; flex-wrap: wrap; }
   @media (max-width: 600px) {
