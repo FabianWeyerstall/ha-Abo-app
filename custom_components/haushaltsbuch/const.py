@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -29,6 +29,7 @@ DEFAULT_CATEGORIES = [
     "Motorrad",
     "Steuern",
     "Rundfunk",
+    "Internet & Telefon",
     "TV & Streaming",
     "Abos",
     "Kinder",
@@ -57,6 +58,8 @@ TEMPLATES = [
     {"name": "Berufsunfähigkeitsversicherung", "direction": "expense", "category": "Versicherungen", "icon": "mdi:account-hard-hat", "frequency": "monthly"},
     {"name": "Rechtsschutzversicherung", "direction": "expense", "category": "Versicherungen", "icon": "mdi:scale-balance", "frequency": "yearly"},
     {"name": "Verein", "direction": "expense", "category": "Vereine", "icon": "mdi:account-group", "frequency": "yearly"},
+    {"name": "Internet", "direction": "expense", "category": "Internet & Telefon", "icon": "mdi:router-wireless", "frequency": "monthly"},
+    {"name": "Handy", "direction": "expense", "category": "Internet & Telefon", "icon": "mdi:cellphone", "frequency": "monthly"},
     {"name": "Netflix", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:netflix", "frequency": "monthly"},
     {"name": "Apple", "direction": "expense", "category": "Abos", "icon": "mdi:apple", "frequency": "monthly"},
     {"name": "Cookidoo", "direction": "expense", "category": "Abos", "icon": "mdi:pot-steam", "frequency": "yearly"},
