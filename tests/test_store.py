@@ -129,3 +129,49 @@ def test_plan_and_clear_appointment():
 def test_rolling_unit_validation():
     with pytest.raises(ValidationError):
         Book().save_item("anna", {**ITEM, "schedule": {"frequency": "rolling", "unit": "days"}})
+
+
+def test_export_and_import_roundtrip():
+    import json
+
+    book = Book()
+    hh = book.create_household("anna", "Zuhause", ["ben"])
+    item_id = book.save_item("anna", {**ITEM, "household_id": hh})
+    book.save_item("anna", {**ITEM, "name": "Friseur", "schedule": {"frequency": "rolling", "interval": 1, "unit": "months"}})
+    book.save_item("ben", {**ITEM, "name": "Bens Posten"})
+    book.confirm("anna", item_id, "2026-11-15", "booked", actual_amount=14)
+    book.plan("anna", item_id, "2026-12-15", "2026-12-18")
+    book.set_user_balance("anna", 1200, "2026-11-01")
+
+    exported = json.loads(json.dumps(book.export_items("anna")))
+    assert exported["format"] == "haushaltsbuch"
+    assert [i["name"] for i in exported["items"]] == ["Friseur", "Netflix"]
+    assert "household_id" not in exported["items"][1] and "owner" not in exported["items"][1]
+
+    # into a fresh book for another user: everything private, history kept
+    other = Book()
+    assert other.import_items("carl", exported) == {"added": 2, "skipped": 0}
+    netflix = next(i for i in other.own_items("carl") if i["name"] == "Netflix")
+    assert netflix["household_id"] is None
+    assert netflix["confirmations"][0]["actual_amount"] == 14
+    assert netflix["overrides"][0]["date"] == "2026-12-18"
+    friseur = next(i for i in other.own_items("carl") if i["name"] == "Friseur")
+    assert friseur["schedule"]["unit"] == "months"
+
+    # importing again adds nothing; replace swaps the own items and the balance
+    assert other.import_items("carl", exported) == {"added": 0, "skipped": 2}
+    other.save_item("carl", {**ITEM, "name": "Alt"})
+    assert other.import_items("carl", exported, replace=True) == {"added": 2, "skipped": 0}
+    assert sorted(i["name"] for i in other.own_items("carl")) == ["Friseur", "Netflix"]
+    assert other.user("carl")["balance"] == 1200
+
+
+def test_import_rejects_bad_files_without_changes():
+    book = Book()
+    book.save_item("anna", ITEM)
+    with pytest.raises(ValidationError):
+        book.import_items("anna", {"items": []})
+    bad = {"format": "haushaltsbuch", "items": [{**ITEM, "name": "Gut"}, {**ITEM, "start_date": "kaputt"}]}
+    with pytest.raises(ValidationError):
+        book.import_items("anna", bad, replace=True)
+    assert [i["name"] for i in book.own_items("anna")] == ["Netflix"]

@@ -406,6 +406,11 @@ class HaushaltsbuchPanel extends HTMLElement {
         <div><div class="label">Ausgaben pro Jahr</div><div class="big">${this._money(monthlyOut * 12)}</div></div>
       </div>
       <p class="hint">Wiederkehrende Posten auf einen Monat umgerechnet, einmalige Posten zählen hier nicht mit.</p>
+      ${this._isHousehold() ? "" : `<div class="row-actions">
+        <button class="secondary small" data-action="export">Exportieren</button>
+        <button class="secondary small" data-action="import">Importieren</button>
+        <input type="file" accept=".json,application/json" data-change="import-file" hidden>
+      </div>`}
     </div>
     ${items.length ? Object.keys(groups)
       .sort()
@@ -499,6 +504,8 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (d.type === "balance") body = this._renderBalanceForm();
     if (d.type === "confirm") body = this._renderConfirmForm(d);
     if (d.type === "household") body = this._renderHouseholdForm(d);
+    if (d.type === "import") body = this._renderImportForm(d);
+    if (d.type === "notice") body = this._renderNotice(d);
     return `<div class="overlay" data-action="close-overlay"><div class="dialog" role="dialog" aria-modal="true">${body}</div></div>`;
   }
 
@@ -583,6 +590,72 @@ class HaushaltsbuchPanel extends HTMLElement {
         </div>
       </div>
     </form>`;
+  }
+
+  _renderImportForm(d) {
+    const own = this._state.items.filter((i) => i.owner === this._state.user.id).length;
+    return `<form data-form="import">
+      <h2>Posten importieren</h2>
+      <p>Die Datei „${esc(d.fileName)}“ enthält <b>${d.data.items.length} Posten</b>${d.data.exported_at ? `, exportiert am ${parseIso(d.data.exported_at).toLocaleDateString("de-DE")}` : ""}.</p>
+      <label class="check option"><input type="radio" name="mode" value="add" checked> Hinzufügen: Posten, die es schon gibt (gleicher Name, Betrag und Startdatum), werden übersprungen.</label>
+      <label class="check option"><input type="radio" name="mode" value="replace"> Ersetzen: deine ${own} eigenen Posten werden vorher gelöscht, auch der Kontostand wird übernommen.</label>
+      <p class="hint">Importierte Posten sind zunächst privat. Bestätigte Buchungen und festgelegte Termine werden mit übernommen.</p>
+      <div class="dialog-actions"><span></span><div>
+        <button type="button" class="secondary" data-action="close">Abbrechen</button>
+        <button type="submit">Importieren</button>
+      </div></div>
+    </form>`;
+  }
+
+  _renderNotice(d) {
+    return `<div>
+      <h2>${esc(d.title)}</h2>
+      <p>${esc(d.text)}</p>
+      <div class="dialog-actions"><span></span><div><button type="button" data-action="close">OK</button></div></div>
+    </div>`;
+  }
+
+  async _export() {
+    try {
+      const data = await this._ws("export");
+      const name = `haushaltsbuch-${iso(today())}.json`;
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const file = new File([blob], name, { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: name });
+          return;
+        } catch (err) {
+          if (err.name === "AbortError") return;
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      this._error = err.message || String(err);
+      this._render();
+    }
+  }
+
+  async _readImportFile(input) {
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error("Das ist keine Export-Datei des Haushaltsbuchs.");
+      this._error = null;
+      this._dialog = { type: "import", data, fileName: file.name };
+    } catch (err) {
+      this._error = err instanceof SyntaxError ? "Die Datei ist kein gültiges JSON." : err.message;
+    }
+    this._render();
   }
 
   _renderBalanceForm() {
@@ -710,6 +783,17 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._run(() =>
         this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: f.get("actual_amount") === "" ? null : Number(f.get("actual_amount")) })
       );
+    } else if (kind === "import") {
+      const replace = new FormData(form).get("mode") === "replace";
+      if (replace && !confirm("Alle deine eigenen Posten werden durch den Import ersetzt. Fortfahren?")) return;
+      const data = this._dialog.data;
+      this._run(async () => {
+        const r = await this._ws("import", { data, replace });
+        setTimeout(() => {
+          this._dialog = { type: "notice", title: "Import abgeschlossen", text: `${r.added} Posten importiert${r.skipped ? `, ${r.skipped} schon vorhanden und übersprungen` : ""}.` };
+          this._render();
+        });
+      });
     } else if (kind === "household") {
       const f = new FormData(form);
       const members = f.getAll("members");
@@ -736,6 +820,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._dialog.item = this._readItemForm(form);
       this._dialog.preset = el.value;
       this._render();
+    } else if (kind === "import-file") {
+      this._readImportFile(el);
     } else if (kind === "entities") {
       this._run(() => this._ws("household/update", { household_id: el.dataset.id, entities: el.checked }));
     }
@@ -784,6 +870,12 @@ class HaushaltsbuchPanel extends HTMLElement {
       case "edit-balance":
         this._dialog = { type: "balance" };
         this._render();
+        break;
+      case "export":
+        this._export();
+        break;
+      case "import":
+        this.shadowRoot.querySelector('input[data-change="import-file"]').click();
         break;
       case "new-item":
         this._dialog = {
@@ -952,6 +1044,7 @@ const STYLES = `
   .switch-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 14px; }
   .switch-row small { color: var(--secondary-text-color); }
   .actions { display: flex; gap: 6px; }
+  .row-actions { display: flex; gap: 8px; margin-top: 8px; }
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
   .dialog { background: var(--card-background-color); color: var(--primary-text-color); border-radius: 16px; padding: 20px; width: 100%; max-width: 560px; max-height: calc(100vh - 32px); overflow-y: auto; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
@@ -959,7 +1052,9 @@ const STYLES = `
   label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }
   label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--primary-text-color); font-size: 14px; padding: 4px 0; }
   input, select, textarea { font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); background: var(--input-fill-color, var(--secondary-background-color)); color: var(--primary-text-color); width: 100%; }
-  input[type=checkbox] { width: auto; }
+  input[type=checkbox], input[type=radio] { width: auto; flex-shrink: 0; }
+  label.check.option { align-items: flex-start; }
+  label.check.option input { margin-top: 3px; }
   details { margin: 8px 0; }
   summary { cursor: pointer; font-size: 14px; color: var(--primary-color); }
   .templates { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
