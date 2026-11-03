@@ -3,6 +3,76 @@
  * the WebSocket commands "haushaltsbuch/*" as the logged-in user.
  */
 
+const ICON_LIST_URL = (() => {
+  const url = new URL("mdi-icons.json", import.meta.url);
+  url.search = new URL(import.meta.url).search;
+  return url.href;
+})();
+let iconListPromise = null;
+
+/** Load the list of Material Design Icons ([name, ...aliases]) once. */
+function loadIconList() {
+  if (!iconListPromise) {
+    iconListPromise = fetch(ICON_LIST_URL)
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []);
+  }
+  return iconListPromise;
+}
+
+// German search words → English icon name parts, so "auto" also finds the car.
+const GERMAN_ICON_WORDS = {
+  abo: ["autorenew", "repeat"], arzt: ["doctor", "stethoscope"], auto: ["car"], bahn: ["train"],
+  bank: ["bank"], baby: ["baby"], benzin: ["gas-station"], bonus: ["gift", "star"], buch: ["book"],
+  diesel: ["gas-station"], einkauf: ["cart", "shopping"], essen: ["food", "silverware"],
+  fahrrad: ["bicycle"], fernsehen: ["television"], film: ["movie"], fitness: ["dumbbell"],
+  flug: ["airplane"], friseur: ["content-cut", "hair-dryer"], garten: ["flower", "shovel"],
+  gas: ["fire", "gas-burner"], gehalt: ["cash", "briefcase"], geld: ["cash", "currency-eur", "wallet"],
+  geschenk: ["gift"], gesundheit: ["medical", "heart-pulse"], handy: ["cellphone"], haus: ["home"],
+  heizung: ["radiator", "fire"], hund: ["dog"], internet: ["web", "wifi", "router"], katze: ["cat"],
+  kind: ["baby", "human-child"], kleidung: ["tshirt-crew", "hanger"], kredit: ["credit-card", "bank"],
+  kfz: ["car"], lebensmittel: ["cart", "food-apple"], miete: ["home-city", "key"], müll: ["trash-can"],
+  musik: ["music", "spotify"], pv: ["solar-power", "solar-panel"], rad: ["bicycle", "tire"],
+  reifen: ["tire"], reise: ["airplane", "bag-suitcase"], rente: ["piggy-bank"], schule: ["school"],
+  solar: ["solar-power", "solar-panel"], sparen: ["piggy-bank"], spende: ["hand-heart"],
+  spiel: ["gamepad", "controller"], sport: ["dumbbell", "soccer"], steuer: ["file-document", "bank"],
+  strom: ["flash", "lightning-bolt", "power-plug"], tanken: ["gas-station", "fuel"],
+  telefon: ["phone"], tier: ["paw"], urlaub: ["beach", "airplane"], versicherung: ["shield", "umbrella"],
+  wasser: ["water"], werkzeug: ["tools", "wrench"], wohnung: ["home", "key"], zeitung: ["newspaper"],
+  zug: ["train"],
+};
+
+/** Best matching icon names for a search text, most relevant first. */
+function searchIcons(list, query, limit = 40) {
+  const q = query.trim().toLowerCase().replace(/^mdi:/, "").replace(/\s+/g, "-");
+  if (!q) return [];
+  const terms = [[q, 0]];
+  if (q.length >= 3) {
+    for (const [word, english] of Object.entries(GERMAN_ICON_WORDS)) {
+      if (word.startsWith(q)) english.forEach((e, i) => terms.push([e, 5 - i]));
+    }
+  }
+  const best = new Map();
+  for (const [name, ...aliases] of list) {
+    let top = 0;
+    for (const [term, bonus] of terms) {
+      let score = 0;
+      if (name === term) score = 100;
+      else if (name.startsWith(`${term}-`)) score = 85 - name.length / 100;
+      else if (name.startsWith(term)) score = 80 - name.length / 100;
+      else if (name.includes(term)) score = 60 - name.length / 100;
+      else if (aliases.some((a) => a.startsWith(term))) score = 40 - name.length / 100;
+      else if (aliases.some((a) => a.includes(term))) score = 20 - name.length / 100;
+      if (score) top = Math.max(top, score + bonus);
+    }
+    if (top) best.set(name, top);
+  }
+  return [...best.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([name]) => `mdi:${name}`);
+}
+
 const CERTAINTY = {
   sicher: { label: "sicher", color: "var(--success-color, #43a047)" },
   wahrscheinlich: { label: "wahrscheinlich", color: "var(--warning-color, #ffa000)" },
@@ -153,6 +223,31 @@ class HaushaltsbuchPanel extends HTMLElement {
       if (ev.target.name !== "icon") return;
       const preview = ev.target.closest("label")?.querySelector(".icon-preview");
       if (preview) preview.innerHTML = this._icon(ev.target.value.trim(), 20);
+      this._suggestIcons(ev.target);
+    });
+    this.shadowRoot.addEventListener("focusin", (ev) => {
+      if (ev.target.name === "icon") this._suggestIcons(ev.target);
+    });
+    this.shadowRoot.addEventListener("focusout", (ev) => {
+      if (ev.target.name !== "icon") return;
+      const box = ev.target.closest(".icon-field")?.querySelector(".icon-suggest");
+      if (box && !box.contains(ev.relatedTarget)) setTimeout(() => (box.hidden = true), 250);
+    });
+    this.shadowRoot.addEventListener("keydown", (ev) => {
+      if (ev.target.name !== "icon") return;
+      const box = ev.target.closest(".icon-field")?.querySelector(".icon-suggest");
+      if (!box || box.hidden) return;
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        box.hidden = true;
+      } else if (ev.key === "Enter") {
+        const first = box.querySelector("[data-icon]");
+        if (first) {
+          ev.preventDefault();
+          this._pickIcon(ev.target, first.dataset.icon);
+        }
+      }
     });
   }
 
@@ -729,7 +824,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
         <label>Kategorie<input name="category" list="categories" required value="${esc(item.category || "")}" ${dis}>
           <datalist id="categories">${this._state.categories.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
-        <label>Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="mdi:netflix oder Emoji" value="${esc(item.icon || "")}" ${dis}></label>
+        <label class="icon-field">Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Suchen, z.B. netflix, auto, haus – oder Emoji" value="${esc(item.icon || "")}" ${dis}><div class="icon-suggest" hidden></div></label>
         <label>Turnus<select name="preset" data-change="preset" ${dis}>
           ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p.label}</option>`).join("")}
         </select></label>
@@ -1080,10 +1175,47 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
+  async _suggestIcons(input) {
+    const box = input.closest(".icon-field")?.querySelector(".icon-suggest");
+    if (!box) return;
+    const query = input.value;
+    // Emoji or other non-MDI text: no suggestions.
+    if (!/^[a-z0-9:\- ]+$/i.test(query.trim())) {
+      box.hidden = true;
+      return;
+    }
+    const list = await loadIconList();
+    if (input.value !== query || this.shadowRoot.activeElement !== input) return;
+    const matches = searchIcons(list, query);
+    if (!matches.length || (matches.length === 1 && matches[0] === query.trim())) {
+      box.hidden = true;
+      return;
+    }
+    box.innerHTML = matches
+      .map((icon) => `<button type="button" data-action="pick-icon" data-icon="${esc(icon)}" title="${esc(icon)}">${this._icon(icon, 22)}<span>${esc(icon.slice(4))}</span></button>`)
+      .join("");
+    box.hidden = false;
+  }
+
+  _pickIcon(input, icon) {
+    input.value = icon;
+    const field = input.closest(".icon-field");
+    const preview = field?.querySelector(".icon-preview");
+    if (preview) preview.innerHTML = this._icon(icon, 20);
+    const box = field?.querySelector(".icon-suggest");
+    if (box) box.hidden = true;
+  }
+
   _onClick(ev) {
     const target = ev.target.closest("[data-action]");
     if (!target) return;
     const a = target.dataset.action;
+    if (a === "pick-icon") {
+      ev.preventDefault();
+      const input = target.closest(".icon-field")?.querySelector('input[name="icon"]');
+      if (input) this._pickIcon(input, target.dataset.icon);
+      return;
+    }
     if (a === "close-overlay") {
       if (ev.target === target) {
         this._dialog = null;
@@ -1364,6 +1496,12 @@ const STYLES = `
   .templates { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
   .template { display: flex; align-items: center; gap: 4px; background: var(--secondary-background-color); color: var(--primary-text-color); white-space: nowrap; font-size: 13px; padding: 6px 10px; border-radius: 16px; }
   .icon-preview { display: inline-flex; vertical-align: middle; color: var(--primary-color); }
+  .icon-field { position: relative; }
+  .icon-suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; max-height: 240px; overflow-y: auto; background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); padding: 4px; }
+  .icon-suggest[hidden] { display: none; }
+  .icon-suggest button { display: flex; align-items: center; gap: 10px; width: 100%; background: none; color: var(--primary-text-color); text-align: left; padding: 6px 8px; border-radius: 6px; font-size: 14px; font-weight: normal; }
+  .icon-suggest button:hover, .icon-suggest button:focus { background: var(--secondary-background-color); }
+  .icon-suggest ha-icon { color: var(--primary-color); flex-shrink: 0; }
   .members { margin: 12px 0; }
   .end-date { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
   .dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }

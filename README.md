@@ -51,7 +51,7 @@ Tab **Posten** → **+ Neuer Posten**.
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
 5. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
 
-Das **Symbol** ist eine MDI-Bezeichnung wie `mdi:netflix` (Übersicht auf [pictogrammers.com](https://pictogrammers.com/library/mdi/)) oder einfach ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
+Beim **Symbol** einfach lostippen: Eine Liste schlägt passende MDI-Symbole vor (englische Namen wie `netflix`, `car`, `home`, aber auch gängige deutsche Wörter wie „Auto“, „Strom“, „Geld“ oder „Versicherung“). Antippen oder Enter übernimmt den ersten Vorschlag. Alternativ geht ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
 
 ### Preisänderung eintragen
 

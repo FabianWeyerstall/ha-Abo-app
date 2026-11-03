@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
