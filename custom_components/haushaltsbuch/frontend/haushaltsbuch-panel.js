@@ -106,6 +106,31 @@ const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "A
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+/**
+ * Parse an amount typed with comma or dot as decimal separator.
+ * "1.234,56", "1,234.56", "12,5" and "12.5" all work. With only one kind of
+ * separator, `decimal` (the user's decimal separator) decides about cases like
+ * "1.200": a thousands separator for German users, 1.2 for English ones.
+ * Returns NaN if empty or invalid.
+ */
+const parseAmount = (value, decimal = ",") => {
+  if (typeof value === "number") return value;
+  let text = String(value ?? "").trim().replace(/[\s\u00a0\u202f']/g, "");
+  if (!text) return NaN;
+  const lastComma = text.lastIndexOf(",");
+  const lastDot = text.lastIndexOf(".");
+  if (lastComma > -1 && lastDot > -1) {
+    const decimal = lastComma > lastDot ? "," : ".";
+    text = text.split(decimal === "," ? "." : ",").join("").replace(decimal, ".");
+  } else if (lastComma > -1) {
+    const grouped = /^-?\d{1,3}(,\d{3})+$/.test(text) && (decimal === "." || text.split(",").length > 2);
+    text = grouped ? text.replace(/,/g, "") : text.replace(",", ".");
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(text) && (decimal === "," || text.split(".").length > 2)) {
+    text = text.replace(/\./g, "");
+  }
+  return /^-?\d*\.?\d+$/.test(text) ? Number(text) : NaN;
+};
+
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parseIso = (s) => {
   const [y, m, d] = s.split("-").map(Number);
@@ -335,9 +360,56 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   // -------------------------------------------------------------- formatting
 
+  /** Locale for numbers, following the number format in the user's HA profile. */
+  _numberLocale() {
+    const loc = this._hass?.locale || {};
+    switch (loc.number_format) {
+      case "comma_decimal":
+      case "none":
+        return "en-US";
+      case "decimal_comma":
+        return "de-DE";
+      case "space_comma":
+        return "fr-FR";
+      case "system":
+        return navigator.language || "de-DE";
+      default:
+        return loc.language || this._hass?.language || navigator.language || "de-DE";
+    }
+  }
+
+  _decimalSeparator() {
+    try {
+      return new Intl.NumberFormat(this._numberLocale()).formatToParts(1.5).find((p) => p.type === "decimal")?.value || ",";
+    } catch (err) {
+      return ",";
+    }
+  }
+
+  /** Value for an amount input field, written with the user's decimal separator. */
+  _amountValue(value) {
+    if (value === null || value === undefined || value === "") return "";
+    const n = parseAmount(value, ".");
+    if (!Number.isFinite(n)) return esc(value);
+    const rounded = Math.round(n * 100) / 100;
+    return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)).replace(".", this._decimalSeparator());
+  }
+
+  /** Number from an amount field; empty or invalid input gives `empty`. */
+  _parsedAmount(value, empty = "") {
+    const n = parseAmount(value, this._decimalSeparator());
+    return Number.isFinite(n) ? n : empty;
+  }
+
+  /** Attributes for a text field that takes an amount. */
+  _amountAttrs(allowNegative = false) {
+    const example = `12${this._decimalSeparator()}99`;
+    return `type="text" inputmode="decimal" autocomplete="off" data-amount pattern="${allowNegative ? "-?" : ""}[0-9][0-9., ]*" title="Betrag, z.B. ${example}" placeholder="0${this._decimalSeparator()}00"`;
+  }
+
   _money(value, signed = false) {
     const currency = this._state?.currency || "EUR";
-    const text = new Intl.NumberFormat("de-DE", { style: "currency", currency }).format(Math.abs(value));
+    const text = new Intl.NumberFormat(this._numberLocale(), { style: "currency", currency }).format(Math.abs(value));
     const sign = value < 0 ? "−" : signed ? "+" : "";
     return `<span class="money">${sign}${text}</span>`;
   }
@@ -836,7 +908,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           <option value="expense" ${item.direction !== "income" ? "selected" : ""}>Ausgabe</option>
           <option value="income" ${item.direction === "income" ? "selected" : ""}>Einnahme</option>
         </select></label>
-        <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
+        <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required value="${this._amountValue(item.amount)}" ${dis}></label>
         <label class="suggest-field">Kategorie<input name="category" autocomplete="off" required placeholder="Auswählen oder neue eingeben" value="${esc(item.category || "")}" ${dis}><div class="suggest" hidden></div></label>
         <label class="suggest-field">Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Suchen, z.B. netflix, auto, haus – oder Emoji" value="${esc(item.icon || "")}" ${dis}><div class="suggest" hidden></div></label>
         <label>Turnus<select name="preset" data-change="preset" ${dis}>
@@ -904,7 +976,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         .map(
           (c, idx) => `<div class="price-row">
             <label>ab<input name="pc_from" type="date" required value="${esc(c.from || "")}" ${dis}></label>
-            <label>neuer Betrag<input name="pc_amount" type="number" step="0.01" min="0" required value="${c.amount ?? ""}" ${dis}></label>
+            <label>neuer Betrag<input name="pc_amount" ${this._amountAttrs()} required value="${this._amountValue(c.amount)}" ${dis}></label>
             ${dis ? "" : `<button type="button" class="danger small" data-action="price-remove" data-index="${idx}" aria-label="Preisänderung entfernen">✕</button>`}
           </div>`
         )
@@ -1006,7 +1078,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <h2>${this._isHousehold() ? "Haushaltskonto" : "Kontostand"} setzen</h2>
       <p class="hint">Trage den Stand aus deiner Banking-App ein. Alle Buchungen bis einschließlich zu diesem Datum gelten als enthalten.</p>
       <div class="grid">
-        <label>Kontostand (${esc(this._state.currency)})<input name="balance" type="number" step="0.01" required value="${b.balance ?? ""}"></label>
+        <label>Kontostand (${esc(this._state.currency)})<input name="balance" ${this._amountAttrs(true)} required value="${this._amountValue(b.balance)}"></label>
         <label>Stand vom<input name="balance_date" type="date" required value="${iso(today())}"></label>
       </div>
       <div class="dialog-actions"><span></span><div>
@@ -1031,7 +1103,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <p class="hint">${hint}</p>
       <div class="grid">
         <label>Datum<input name="actual_date" type="date" required value="${esc(d.date)}"></label>
-        <label>Betrag<input name="actual_amount" type="number" step="0.01" min="0" value="${esc(d.amount)}"></label>
+        <label>Betrag<input name="actual_amount" ${this._amountAttrs()} value="${this._amountValue(d.amount)}"></label>
       </div>
       <div class="dialog-actions">
         <div>
@@ -1085,7 +1157,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     const froms = f.getAll("pc_from");
     const amounts = f.getAll("pc_amount");
-    const price_changes = froms.map((from, i) => ({ from, amount: amounts[i] }));
+    const price_changes = froms.map((from, i) => ({ from, amount: this._parsedAmount(amounts[i]) }));
     const contract = f.get("has_contract")
       ? { end: f.get("contract_end") || "", notice: Number(f.get("notice") || 0), notice_unit: f.get("notice_unit") || "months", renew: Number(f.get("renew") || 0), renew_unit: f.get("renew_unit") || "months" }
       : null;
@@ -1102,7 +1174,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ...this._dialog.item,
       name: f.get("name"),
       direction: f.get("direction"),
-      amount: f.get("amount"),
+      amount: this._parsedAmount(f.get("amount")),
       category: f.get("category"),
       icon: f.get("icon"),
       start_date: f.get("start_date"),
@@ -1129,12 +1201,12 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._run(() => this._ws("item/save", { item: payload }));
     } else if (kind === "balance") {
       const f = new FormData(form);
-      this._run(() => this._ws("balance", { scope: this._scope, balance: Number(f.get("balance")), balance_date: f.get("balance_date") }));
+      this._run(() => this._ws("balance", { scope: this._scope, balance: this._parsedAmount(f.get("balance"), NaN), balance_date: f.get("balance_date") }));
     } else if (kind === "confirm") {
       const f = new FormData(form);
       const d = this._dialog;
       this._run(() =>
-        this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: f.get("actual_amount") === "" ? null : Number(f.get("actual_amount")) })
+        this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: this._parsedAmount(f.get("actual_amount"), null) })
       );
     } else if (kind === "import") {
       const replace = new FormData(form).get("mode") === "replace";
@@ -1373,8 +1445,8 @@ class HaushaltsbuchPanel extends HTMLElement {
         const form = target.closest("form");
         if (!form.reportValidity()) break;
         const f = new FormData(form);
-        const amount = f.get("actual_amount");
-        this._run(() => this._ws("plan", { item_id: this._dialog.item_id, due_date: this._dialog.due, date: f.get("actual_date"), amount: amount === "" ? null : Number(amount) }));
+        const amount = this._parsedAmount(f.get("actual_amount"), null);
+        this._run(() => this._ws("plan", { item_id: this._dialog.item_id, due_date: this._dialog.due, date: f.get("actual_date"), amount }));
         break;
       }
       case "plan-clear":
@@ -1542,7 +1614,7 @@ const STYLES = `
   .incognito-toggle { background: none; color: inherit; padding: 6px; border-radius: 50%; display: inline-flex; line-height: 0; }
   .incognito-toggle.on { background: rgba(255,255,255,0.25); }
   :host(.incognito) .money { filter: blur(7px); user-select: none; }
-  :host(.incognito) input[step="0.01"] { color: transparent; text-shadow: 0 0 10px var(--primary-text-color); }
+  :host(.incognito) input[data-amount] { color: transparent; text-shadow: 0 0 10px var(--primary-text-color); }
   :host(.incognito) .money { display: inline-block; }
   .suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; max-height: 240px; overflow-y: auto; background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); padding: 4px; }
   .suggest[hidden] { display: none; }
