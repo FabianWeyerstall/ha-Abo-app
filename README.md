@@ -61,6 +61,16 @@ Posten öffnen → **Preisänderungen** → **+ Preisänderung**, Datum und neue
 
 Posten öffnen → **Vertrag und Kündigung** → Häkchen **Vertragslaufzeit erfassen**. Eintragen, bis wann der Vertrag läuft, die Kündigungsfrist und um wie lange er sich danach verlängert, in Tagen, Wochen oder Monaten (0 = endet einfach). Die App rechnet das nächste Vertragsende selbst weiter. Muss in den nächsten 60 Tagen gekündigt werden, erscheint der Vertrag in der Zeitleiste unter **Kündigungsfristen**, in der Postenliste steht „kündbar bis …“.
 
+### Benachrichtigung bei Kündigungsfristen aufs Handy
+
+Das Haushaltsbuch prüft jeden Morgen um 9 Uhr alle Verträge. Muss einer in **30, 7 oder 1 Tag(en)** gekündigt sein, löst es in Home Assistant das Ereignis `haushaltsbuch_kuendigungsfrist` aus. Eine fertige Automationsvorlage (Blueprint) macht daraus eine Push-Nachricht:
+
+1. [Blueprint importieren](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FFabianWeyerstall%2Fha-Abo-app%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fhaushaltsbuch%2Fkuendigungsfrist.yaml) (oder unter **Einstellungen → Automationen & Szenen → Blueprints → Blueprint importieren** diese Adresse eintragen: `https://github.com/FabianWeyerstall/ha-Abo-app/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml`)
+2. Auf den Blueprint tippen, dein Handy auswählen, speichern
+3. Testen: **Entwicklerwerkzeuge → Aktionen → „Haushaltsbuch: Kündigungsfristen melden“** mit **Alle kommenden** ausführen. Dann kommt sofort für jeden Vertrag, der in den nächsten 60 Tagen kündbar ist, eine Nachricht.
+
+Das Ereignis enthält `name`, `cancel_by`, `contract_end`, `days_left`, `renews`, `amount`, `owner_name` und `household`, falls du lieber eine eigene Automation baust. Es kommt auch für private Posten, sichtbar ist es aber nur für Admins in den Automationen.
+
 ### 3. Buchungen bestätigen
 
 Was in den letzten drei Wochen fällig war, steht in der Zeitleiste unter **Zu bestätigen**. Tippe auf **gebucht** oder **ausgefallen**, oder bestätige mit **Alle … gebucht** alles auf einmal. Wer eine Buchung antippt, kann auch das echte Datum und den echten Betrag eintragen. Pünktlich bestätigte Posten werden mit der Zeit *sicher*.

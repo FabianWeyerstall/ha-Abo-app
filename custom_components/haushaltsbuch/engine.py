@@ -604,3 +604,37 @@ def month_summaries(
         summary["entries"] = entries
         result.append(summary)
     return result
+
+
+REMINDER_DAYS = (30, 7, 1)
+
+
+def contract_reminders(
+    items: Iterable[dict[str, Any]], today: date, all_upcoming: bool = False
+) -> list[dict[str, Any]]:
+    """Contracts whose last day to cancel is 30, 7 or 1 day(s) away.
+
+    With `all_upcoming` every contract that can still be cancelled within the
+    next 60 days is returned (used to test a notification right away).
+    """
+    result = []
+    for item in items:
+        info = contract_info(item, today)
+        if not info or info["ended"]:
+            continue
+        days_left = info["days_left"]
+        if (all_upcoming and 0 <= days_left <= 60) or days_left in REMINDER_DAYS:
+            result.append(
+                {
+                    "item_id": item["id"],
+                    "name": item.get("name", ""),
+                    "owner": item.get("owner"),
+                    "household_id": item.get("household_id"),
+                    "amount": round(amount_on(item, today), 2),
+                    "cancel_by": info["cancel_by"],
+                    "contract_end": info["end"],
+                    "days_left": days_left,
+                    "renews": info["renews"],
+                }
+            )
+    return sorted(result, key=lambda r: r["cancel_by"])

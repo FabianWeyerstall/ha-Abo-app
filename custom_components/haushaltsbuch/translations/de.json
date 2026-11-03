@@ -12,12 +12,32 @@
   },
   "entity": {
     "calendar": {
-      "due_dates": { "name": "Fälligkeiten" }
+      "due_dates": {
+        "name": "Fälligkeiten"
+      }
     },
     "sensor": {
-      "next_expense": { "name": "Nächste Ausgabe" },
-      "next_income": { "name": "Nächste Einnahme" },
-      "month_end_balance": { "name": "Kontostand Monatsende" }
+      "next_expense": {
+        "name": "Nächste Ausgabe"
+      },
+      "next_income": {
+        "name": "Nächste Einnahme"
+      },
+      "month_end_balance": {
+        "name": "Kontostand Monatsende"
+      }
+    }
+  },
+  "services": {
+    "send_contract_reminders": {
+      "name": "Kündigungsfristen melden",
+      "description": "Löst das Ereignis haushaltsbuch_kuendigungsfrist für jeden Vertrag aus, der in 30, 7 oder 1 Tag(en) gekündigt sein muss. Läuft automatisch jeden Tag um 9:00 Uhr.",
+      "fields": {
+        "all": {
+          "name": "Alle kommenden",
+          "description": "Für jeden Vertrag auslösen, der in den nächsten 60 Tagen kündbar ist, z.B. um eine Automation zu testen."
+        }
+      }
     }
   }
 }

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -14,6 +14,9 @@ PANEL_TITLE = "Haushaltsbuch"
 PANEL_ICON = "mdi:cash-clock"
 
 SIGNAL_UPDATED = f"{DOMAIN}_updated"
+EVENT_CONTRACT_REMINDER = f"{DOMAIN}_kuendigungsfrist"
+SERVICE_CONTRACT_REMINDERS = "send_contract_reminders"
+REMINDER_HOUR = 9
 
 DEFAULT_CATEGORIES = [
     "Einnahmen",

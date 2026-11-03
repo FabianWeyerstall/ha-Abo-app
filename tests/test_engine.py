@@ -270,3 +270,17 @@ def test_rolling_learns_interval_from_booked_visits():
     off = item(start_date="2026-08-01", schedule={"frequency": "rolling", "interval": 1, "unit": "months", "learn": False}, confirmations=conf)
     assert learned_interval_days(off) is None
     assert dates_of(off, start="2026-10-11", end="2026-12-31") == ["2026-11-10", "2026-12-10"]
+
+
+def test_contract_reminders_30_7_1_days_before():
+    from custom_components.haushaltsbuch.engine import contract_reminders
+
+    def contract(id_, end):
+        return item(id=id_, name=id_, contract={"end": end, "notice": 1, "notice_unit": "months", "renew": 12})
+
+    items = [contract("in30", "2027-01-01"), contract("in7", "2026-12-08"), contract("in10", "2026-12-11"), item(id="none")]
+    today = date(2026, 11, 1)
+    assert [r["name"] for r in contract_reminders(items, today)] == ["in7", "in30"]
+    r = contract_reminders(items, today)[0]
+    assert r["days_left"] == 7 and r["cancel_by"] == "2026-11-08" and r["renews"]
+    assert [r["name"] for r in contract_reminders(items, today, all_upcoming=True)] == ["in7", "in10", "in30"]

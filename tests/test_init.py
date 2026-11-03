@@ -150,3 +150,28 @@ async def test_websocket_export_import(hass: HomeAssistant, hass_ws_client) -> N
     await client.send_json_auto_id({"type": f"{DOMAIN}/import", "data": {"format": "x"}})
     res = await client.receive_json()
     assert not res["success"] and res["error"]["code"] == "invalid_format"
+
+
+async def test_contract_reminder_event_and_service(hass: HomeAssistant, hass_ws_client) -> None:
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    from homeassistant.util import dt as dt_util
+
+    await _setup(hass)
+    client = await hass_ws_client(hass)
+    today = dt_util.now().date()  # HA's time zone, as used by the integration
+    cancel_in_7 = (today + timedelta(days=7)).isoformat()
+    await client.send_json_auto_id(
+        {
+            "type": f"{DOMAIN}/item/save",
+            "item": {**_item(today), "contract": {"end": cancel_in_7, "notice": 0, "notice_unit": "days", "renew": 12}},
+        }
+    )
+    assert (await client.receive_json())["success"]
+    events = async_capture_events(hass, f"{DOMAIN}_kuendigungsfrist")
+    await hass.services.async_call(DOMAIN, "send_contract_reminders", {}, blocking=True)
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    data = events[0].data
+    assert data["name"] == "Netflix" and data["days_left"] == 7 and data["cancel_by"] == cancel_in_7
+    assert data["household"] is None and "owner_name" in data

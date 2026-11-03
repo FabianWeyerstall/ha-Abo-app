@@ -1,0 +1,55 @@
+blueprint:
+  name: "Haushaltsbuch: Kündigungsfrist aufs Handy"
+  description: >-
+    Schickt eine Benachrichtigung aufs Handy, wenn ein Vertrag aus dem
+    Haushaltsbuch in 30, 7 oder 1 Tag(en) gekündigt sein muss. Das
+    Haushaltsbuch prüft das jeden Morgen um 9 Uhr. Zum Testen die Aktion
+    „Haushaltsbuch: Kündigungsfristen melden“ mit „Alle kommenden“ ausführen.
+  domain: automation
+  source_url: https://github.com/FabianWeyerstall/ha-Abo-app/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml
+  input:
+    notify_device:
+      name: Handy
+      description: Das Gerät aus der Home-Assistant-App, das benachrichtigt wird.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    only_household:
+      name: Nur Verträge aus einem Haushalt
+      description: >-
+        Leer lassen für alle Verträge. Sonst den Namen des Haushalts
+        eintragen, z.B. „Familie“.
+      default: ""
+      selector:
+        text:
+
+mode: queued
+max: 20
+
+variables:
+  only_household: !input only_household
+
+triggers:
+  - trigger: event
+    event_type: haushaltsbuch_kuendigungsfrist
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ only_household == '' or trigger.event.data.household == only_household }}
+
+actions:
+  - variables:
+      d: "{{ trigger.event.data }}"
+      cancel_by: "{{ strptime(d.cancel_by, '%Y-%m-%d').strftime('%d.%m.%Y') }}"
+      contract_end: "{{ strptime(d.contract_end, '%Y-%m-%d').strftime('%d.%m.%Y') }}"
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "Kündigungsfrist: {{ d.name }}"
+    message: >-
+      {% if d.days_left == 0 %}Heute{% elif d.days_left == 1 %}Morgen{% else %}In {{ d.days_left }} Tagen{% endif %}
+      ({{ cancel_by }}) ist der letzte Tag zum Kündigen.
+      {% if d.renews %}Sonst verlängert sich der Vertrag nach dem {{ contract_end }}.{% else %}Der Vertrag endet am {{ contract_end }}.{% endif %}
+      {{ '%.2f' | format(d.amount) | replace('.', ',') }} € pro Buchung.
