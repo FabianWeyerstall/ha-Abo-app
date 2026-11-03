@@ -224,8 +224,10 @@ Das Dashboard auf einen Blick: Kontostand, erwarteter Stand zum Monatsende, Einn
 - **Wohin das meiste Geld fließt:** Kreisdiagramm der Ausgaben nach Kategorie (die fünf größten, der Rest unter „Weitere“).
 - **Fixkosten, Sonderposten und Budgets** im Verhältnis, pro Monat gemittelt.
 - **Wie sicher sind die Ausgaben?** Anteil sicherer, wahrscheinlicher und unsicherer Ausgaben.
-- **Ausgaben nach Turnus** und die **größten Ausgaben**, jeweils auf einen Monat umgerechnet. Antippen öffnet den Posten.
+- **Was jeder Turnus pro Monat kostet** und die **größten Ausgaben**, jeweils auf einen Monat umgerechnet. Antippen öffnet den Posten.
 - **Sonderposten der nächsten 3 Monate.**
+
+Tippe auf einen Anteil (z.B. „wahrscheinlich“, „Sonderposten, umgelegt“, eine Kategorie oder einen Turnus), um die Posten dahinter zu sehen. Das ⓘ neben einer Überschrift erklärt kurz, wie die Zahl zustande kommt.
 
 ## Gemeinsames Haushaltsbuch
 

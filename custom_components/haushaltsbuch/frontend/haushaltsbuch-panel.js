@@ -256,8 +256,20 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("pointermove", (ev) => this._onTrendPointer(ev));
+    this.shadowRoot.addEventListener("mouseover", (ev) => {
+      const help = ev.target.closest?.(".help");
+      if (help && help !== this._helpFor) {
+        this._showHelp(help);
+        this._helpByHover = true;
+      }
+    });
+    this.shadowRoot.addEventListener("mouseout", (ev) => {
+      // Only a text opened by hovering closes when the mouse leaves; a tapped one stays.
+      if (this._helpByHover && ev.target.closest?.(".help") && !ev.relatedTarget?.closest?.(".help")) this._hideHelp();
+    });
     this.shadowRoot.addEventListener("pointerdown", (ev) => this._onTrendPointer(ev));
     this.shadowRoot.addEventListener("pointerleave", (ev) => this._onTrendPointer(ev), true);
+    window.addEventListener("scroll", () => this._hideHelp(), { passive: true, capture: true });
     window.addEventListener("resize", () => {
       if (this._view !== "dashboard" || !this.isConnected) return;
       clearTimeout(this._resizeTimer);
@@ -287,6 +299,11 @@ class HaushaltsbuchPanel extends HTMLElement {
       if (box && !box.contains(ev.relatedTarget)) setTimeout(() => (box.hidden = true), 250);
     });
     this.shadowRoot.addEventListener("keydown", (ev) => {
+      if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches?.('[role="button"][data-action]')) {
+        ev.preventDefault();
+        ev.target.click();
+        return;
+      }
       if (!SUGGEST_FIELDS.has(ev.target.name)) return;
       const box = ev.target.closest(".suggest-field")?.querySelector(".suggest");
       if (!box || box.hidden) return;
@@ -444,6 +461,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     return `type="text" inputmode="decimal" autocomplete="off" data-amount pattern="${allowNegative ? "-?" : ""}[0-9][0-9., ]*" title="${tr("Betrag, z.B.", "Amount, e.g.")} ${example}" placeholder="0${this._decimalSeparator()}00"`;
   }
 
+  _moneyPlain(value) {
+    const currency = this._state?.currency || "EUR";
+    return `<span class="money">${new Intl.NumberFormat(this._numberLocale(), { style: "currency", currency }).format(value)}</span>`;
+  }
+
   _money(value, signed = false) {
     const currency = this._state?.currency || "EUR";
     const text = new Intl.NumberFormat(this._numberLocale(), { style: "currency", currency }).format(Math.abs(value));
@@ -524,6 +546,8 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _render() {
     const s = this._state;
+    this._helpTip = null;
+    this._helpFor = null;
     this.classList.toggle("incognito", !!this._incognito);
     this.classList.toggle("dark", !!this._hass?.themes?.darkMode);
     this.shadowRoot.innerHTML = `
@@ -904,15 +928,15 @@ class HaushaltsbuchPanel extends HTMLElement {
     const monthEnd = iso(new Date(today().getFullYear(), today().getMonth() + 1, 0));
     const endDay = [...days].reverse().find((d) => d.date <= monthEnd && d.balance_likely !== null);
     const lowest = days.filter((d) => d.balance_likely !== null).reduce((m, d) => (m && m.balance_likely <= d.balance_likely ? m : d), null);
-    const tile = (label, value, sub = "", cls = "") =>
-      `<div class="kpi"><div class="label">${label}</div><div class="kpi-value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+    const tile = (label, value, sub = "", cls = "", help = "") =>
+      `<div class="kpi"><div class="label">${label}${help ? this._help(help) : ""}</div><div class="kpi-value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     const kpis = `<div class="card"><div class="kpis">
       ${tile(this._isHousehold() ? tr("Haushaltskonto", "Household account") : tr("Kontostand", "Balance"), known ? this._money(b.balance) : "—", known ? `${tr("Stand", "As of")} ${fmtDate(b.balance_date)}` : tr("noch nicht gesetzt", "not set yet"))}
-      ${tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("vorsichtig", "cautious")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "")}
-      ${tile(tr("Einnahmen pro Monat", "Income per month"), this._money(monthlyIn), tr("regelmäßig, umgerechnet", "recurring, converted"), "pos")}
-      ${tile(tr("Ausgaben pro Monat", "Expenses per month"), this._money(monthlyOut), tr("inklusive Budgets und Jahresposten", "incl. budgets and yearly entries"), "neg")}
-      ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos")}
-      ${tile(tr("Tiefster Stand (90 Tage)", "Lowest balance (90 days)"), lowest ? this._money(lowest.balance_likely) : "—", lowest ? fmtDate(lowest.date) : "", lowest && lowest.balance_likely < 0 ? "neg" : "")}
+      ${tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("vorsichtig", "cautious")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "", tr("Kontostand am letzten Tag dieses Monats, wenn alles wie erwartet kommt.", "Balance on the last day of this month if everything comes as expected."))}
+      ${tile(tr("Einnahmen pro Monat", "Income per month"), this._money(monthlyIn), tr("regelmäßig, umgerechnet", "recurring, converted"), "pos", tr("Alle wiederkehrenden Einnahmen auf einen Monat umgerechnet. Einmalige wie ein Bonus zählen nicht.", "All recurring income converted to one month. One-offs such as a bonus are not included."))}
+      ${tile(tr("Ausgaben pro Monat", "Expenses per month"), this._money(monthlyOut), tr("inklusive Budgets und Jahresposten", "incl. budgets and yearly entries"), "neg", tr("Alle wiederkehrenden Ausgaben auf einen Monat umgerechnet, auch jährliche (geteilt durch 12) und Budgets.", "All recurring expenses converted to one month, yearly ones divided by 12, budgets included."))}
+      ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos", tr("Einnahmen pro Monat minus Ausgaben pro Monat. So viel kannst du im Schnitt sparen.", "Income per month minus expenses per month: what you can save on average."))}
+      ${tile(tr("Tiefster Stand (90 Tage)", "Lowest balance (90 days)"), lowest ? this._money(lowest.balance_likely) : "—", lowest ? fmtDate(lowest.date) : "", lowest && lowest.balance_likely < 0 ? "neg" : "", tr("Der niedrigste erwartete Kontostand in den nächsten 90 Tagen, meist kurz vor dem Gehalt.", "The lowest expected balance in the next 90 days, usually just before payday."))}
     </div></div>`;
     return kpis + this._renderTrend(days) + this._renderCategoryPie(rows) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
   }
@@ -943,7 +967,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     this._trendGeom = { pts, W, H, x, y };
     const last = pts[pts.length - 1];
     return `<div class="card">
-      <h3>${tr("Kontostand-Verlauf", "Balance trend")}</h3>
+      <h3>${tr("Kontostand-Verlauf", "Balance trend")}${this._help(tr("Ausgehend von deinem zuletzt gesetzten Kontostand wird jede kommende Buchung abgezogen oder addiert. Erwartet: sichere und wahrscheinliche Buchungen und Budgets. Vorsichtig: nur sichere Einnahmen, aber alle erwarteten Ausgaben.", "Starting from the balance you last set, every upcoming booking is added or subtracted. Expected: certain and likely bookings and budgets. Cautious: only certain income, but every expected expense."))}</h3>
       <div class="legend">
         <span><i class="swatch line s1"></i>${tr("erwartet", "expected")}</span>
         <span><i class="swatch line s2 dashed"></i>${tr("vorsichtig", "cautious")}</span>
@@ -1026,21 +1050,106 @@ class HaushaltsbuchPanel extends HTMLElement {
       </div>`;
   }
 
+  _showHelp(el) {
+    this._hideHelp();
+    const tip = document.createElement("div");
+    tip.className = "help-tip";
+    tip.textContent = el.dataset.help;
+    this.shadowRoot.appendChild(tip);
+    const r = el.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+    const below = r.bottom + 6 + tip.offsetHeight < window.innerHeight;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${below ? r.bottom + 6 : r.top - tip.offsetHeight - 6}px`;
+    this._helpTip = tip;
+    this._helpFor = el;
+    this._helpShownAt = Date.now();
+  }
+
+  _hideHelp() {
+    this._helpTip?.remove();
+    this._helpTip = null;
+    this._helpFor = null;
+  }
+
+  /** Small ⓘ that explains a figure on hover, focus or tap. */
+  _help(text) {
+    return `<span class="help" tabindex="0" role="note" aria-label="${esc(text)}" data-help="${esc(text)}">ⓘ</span>`;
+  }
+
+  /** Add one booking to a per-item breakdown. */
+  _addDetail(map, e, value) {
+    const d = (map[e.item_id] ||= { id: e.item_id, name: e.name, icon: e.icon, value: 0, count: 0 });
+    d.value += value;
+    d.count += 1;
+  }
+
+  /** The entries behind one part of a figure, largest first. */
+  _renderDetails(details, { unit = "month", note = "" } = {}) {
+    const list = Object.values(details || {}).sort((a, b) => b.value - a.value);
+    if (!list.length) return `<div class="details"><div class="empty">${tr("Keine Posten.", "No entries.")}</div></div>`;
+    return `<div class="details">
+      ${note ? `<p class="hint">${note}</p>` : ""}
+      ${list
+        .map(
+          (d) => `<div class="detail-row" data-action="edit-item" data-item="${esc(d.id)}">
+            <span class="detail-icon">${this._icon(d.icon, 18)}</span>
+            <div class="detail-name">${esc(d.name)}<small>${d.sub ?? (d.count === 1 ? tr("1 Buchung", "1 booking") : tr(`${d.count} Buchungen`, `${d.count} bookings`))}</small></div>
+            <div class="detail-value">${this._money(d.value)}<small>${unit === "month" ? tr("pro Monat", "per month") : unit === "total" ? tr("zusammen", "in total") : ""}</small></div>
+          </div>`
+        )
+        .join("")}
+    </div>`;
+  }
+
+  /**
+   * Thin segmented bar with a list of parts below (name, amount, share).
+   * Tapping a part opens the entries behind it.
+   */
+  _splitBar(group, parts, total, opts = {}) {
+    const shown = parts.filter((p) => p.value > 0);
+    if (!shown.length || total <= 0) return `<div class="empty">${tr("Keine Daten.", "No data.")}</div>`;
+    const open = (p) => this._dashOpen === `${group}:${p.key}`;
+    return `<div class="split" role="img" aria-label="${esc(shown.map((p) => `${p.label} ${Math.round((p.value / total) * 100)} %`).join(", "))}">
+        ${shown.map((p) => `<span class="${p.cls} ${open(p) ? "active" : ""}" style="flex:${p.value}" data-action="dash-toggle" data-key="${group}:${p.key}" title="${esc(p.label)}: ${Math.round((p.value / total) * 100)} %"></span>`).join("")}
+      </div>
+      <div class="split-list">
+        ${shown
+          .map(
+            (p) => `<div class="split-row clickable ${open(p) ? "open" : ""}" data-action="dash-toggle" data-key="${group}:${p.key}" role="button" aria-expanded="${open(p)}" tabindex="0">
+              <i class="swatch ${p.cls}"></i>
+              <div class="split-name">${esc(p.label)}${p.help ? this._help(p.help) : ""}${p.hint ? `<small>${p.hint}</small>` : ""}</div>
+              <div class="split-value">${this._money(p.value)}<small>${Math.round((p.value / total) * 100)} %</small></div>
+              <span class="chevron">${open(p) ? "▾" : "▸"}</span>
+            </div>${open(p) ? this._renderDetails(p.details, opts) : ""}`
+          )
+          .join("")}
+      </div>`;
+  }
+
   _renderCategoryPie(rows) {
     if (!rows.length) return "";
     const totals = {};
+    const details = {};
     for (const r of rows) {
       for (const e of r.entries || []) {
         if (e.amount >= 0 || e.certainty === "unsicher" || e.status === "skipped") continue;
-        totals[e.category || tr("Sonstiges", "Other")] = (totals[e.category || tr("Sonstiges", "Other")] || 0) - e.amount / rows.length;
+        const cat = e.category || tr("Sonstiges", "Other");
+        totals[cat] = (totals[cat] || 0) - e.amount / rows.length;
+        this._addDetail((details[cat] ||= {}), e, -e.amount / rows.length);
       }
     }
     const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
     if (!sorted.length) return "";
     // Five named slices in a fixed colour order, everything else folds into "Other".
-    const parts = sorted.slice(0, 5).map(([label, value], i) => ({ label, value, cls: `p${i + 1}` }));
-    const rest = sorted.slice(5).reduce((a, [, v]) => a + v, 0);
-    if (rest > 0) parts.push({ label: tr(`Weitere (${sorted.length - 5})`, `Others (${sorted.length - 5})`), value: rest, cls: "p-other" });
+    const parts = sorted.slice(0, 5).map(([label, value], i) => ({ key: label, label, value, cls: `p${i + 1}`, details: details[label] }));
+    const rest = sorted.slice(5);
+    if (rest.length) {
+      const restDetails = {};
+      for (const [cat] of rest) Object.assign(restDetails, details[cat]);
+      parts.push({ key: "__other", label: tr(`Weitere (${rest.length})`, `Others (${rest.length})`), value: rest.reduce((a, [, v]) => a + v, 0), cls: "p-other", details: restDetails });
+    }
     const total = parts.reduce((a, p) => a + p.value, 0);
     const R0 = 70, R1 = 44, C = 80;
     let angle = -Math.PI / 2;
@@ -1048,14 +1157,16 @@ class HaushaltsbuchPanel extends HTMLElement {
       const sweep = (p.value / total) * Math.PI * 2;
       const a0 = angle, a1 = angle + sweep;
       angle = a1;
-      if (sweep >= Math.PI * 2 - 1e-6) return `<circle class="${p.cls}" cx="${C}" cy="${C}" r="${(R0 + R1) / 2}" fill="none" stroke-width="${R0 - R1}"><title>${esc(p.label)}</title></circle>`;
+      const attrs = `class="${p.cls} ${this._dashOpen === `cat:${p.key}` ? "active" : ""}" data-action="dash-toggle" data-key="cat:${esc(p.key)}"`;
+      if (sweep >= Math.PI * 2 - 1e-6) return `<circle ${attrs} cx="${C}" cy="${C}" r="${(R0 + R1) / 2}" fill="none" stroke-width="${R0 - R1}"><title>${esc(p.label)}</title></circle>`;
       const pt = (r, a) => `${(C + r * Math.cos(a)).toFixed(2)},${(C + r * Math.sin(a)).toFixed(2)}`;
       const large = sweep > Math.PI ? 1 : 0;
-      return `<path class="${p.cls}" d="M${pt(R0, a0)}A${R0},${R0} 0 ${large} 1 ${pt(R0, a1)}L${pt(R1, a1)}A${R1},${R1} 0 ${large} 0 ${pt(R1, a0)}Z"><title>${esc(p.label)}: ${Math.round((p.value / total) * 100)} %</title></path>`;
+      return `<path ${attrs} d="M${pt(R0, a0)}A${R0},${R0} 0 ${large} 1 ${pt(R0, a1)}L${pt(R1, a1)}A${R1},${R1} 0 ${large} 0 ${pt(R1, a0)}Z"><title>${esc(p.label)}: ${Math.round((p.value / total) * 100)} %</title></path>`;
     });
+    const open = (p) => this._dashOpen === `cat:${p.key}`;
     return `<div class="card">
-      <h3>${tr("Wohin das meiste Geld fließt", "Where most of the money goes")}</h3>
-      <p class="hint">${tr(`Ausgaben nach Kategorie, Durchschnitt pro Monat über die nächsten ${rows.length} Monate (sicher und wahrscheinlich, inklusive Budgets).`, `Expenses by category, average per month over the next ${rows.length} months (certain and likely, budgets included).`)}</p>
+      <h3>${tr("Wohin das meiste Geld fließt", "Where most of the money goes")}${this._help(tr("Alle Ausgaben der nächsten 12 Monate nach Kategorie, geteilt durch 12. So siehst du, was ein durchschnittlicher Monat pro Kategorie kostet. Unsichere und ausgefallene Buchungen zählen nicht.", "All expenses of the next 12 months by category, divided by 12: what an average month costs per category. Uncertain and skipped bookings are left out."))}</h3>
+      <p class="hint">${tr("Durchschnitt pro Monat. Tippe auf eine Kategorie, um die Posten darin zu sehen.", "Average per month. Tap a category to see its entries.")}</p>
       <div class="pie-wrap">
         <div class="pie">
           <svg viewBox="0 0 160 160" width="180" height="180" role="img" aria-label="${esc(parts.map((p) => `${p.label} ${Math.round((p.value / total) * 100)} %`).join(", "))}">${slices.join("")}</svg>
@@ -1063,7 +1174,13 @@ class HaushaltsbuchPanel extends HTMLElement {
         </div>
         <div class="split-list pie-list">
           ${parts
-            .map((p) => `<div class="split-row"><i class="swatch ${p.cls}"></i><div class="split-name">${esc(p.label)}</div><div class="split-value">${this._money(p.value)}<small>${Math.round((p.value / total) * 100)} %</small></div></div>`)
+            .map(
+              (p) => `<div class="split-row clickable ${open(p) ? "open" : ""}" data-action="dash-toggle" data-key="cat:${esc(p.key)}" role="button" aria-expanded="${open(p)}" tabindex="0">
+                <i class="swatch ${p.cls}"></i><div class="split-name">${esc(p.label)}</div>
+                <div class="split-value">${this._money(p.value)}<small>${Math.round((p.value / total) * 100)} %</small></div>
+                <span class="chevron">${open(p) ? "▾" : "▸"}</span>
+              </div>${open(p) ? this._renderDetails(p.details) : ""}`
+            )
             .join("")}
         </div>
       </div>
@@ -1073,23 +1190,26 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderSpendSplit(rows, itemsById) {
     if (!rows.length) return "";
     const sums = { regular: 0, budget: 0, special: 0 };
+    const details = { regular: {}, budget: {}, special: {} };
     for (const r of rows) {
       for (const e of r.entries || []) {
         if (e.amount >= 0 || e.certainty === "unsicher" || e.status === "skipped") continue;
         const item = itemsById[e.item_id];
         const kind = e.budget || item?.schedule?.frequency === "budget" ? "budget" : this._isSpecial(item, e.amount) ? "special" : "regular";
         sums[kind] += -e.amount / rows.length;
+        this._addDetail(details[kind], e, -e.amount / rows.length);
       }
     }
     const total = sums.regular + sums.budget + sums.special;
     return `<div class="card">
       <h3>${tr("Fixkosten, Sonderposten und Budgets", "Fixed costs, special entries and budgets")}</h3>
-      <p class="hint">${tr(`Durchschnitt pro Monat über die nächsten ${rows.length} Monate, sichere und wahrscheinliche Ausgaben.`, `Average per month over the next ${rows.length} months, certain and likely expenses.`)}</p>
+      <p class="hint">${tr("Was ein durchschnittlicher Monat kostet, aufgeteilt nach Art der Ausgabe. Tippe auf eine Zeile für die Posten dahinter.", "What an average month costs, split by kind of expense. Tap a row to see the entries behind it.")}</p>
       ${this._splitBar(
+        "spend",
         [
-          { label: tr("Laufende Fixkosten", "Regular fixed costs"), hint: tr("jeden Monat", "every month"), value: sums.regular, cls: "s1" },
-          { label: tr("Sonderposten, umgelegt", "Special entries, spread"), hint: tr("Versicherungen, Jahresbeiträge …", "insurance, yearly fees …"), value: sums.special, cls: "s2" },
-          { label: tr("Budgets", "Budgets"), hint: tr("variable Ausgaben", "variable spending"), value: sums.budget, cls: "s3" },
+          { key: "regular", label: tr("Laufende Fixkosten", "Regular fixed costs"), hint: tr("kommen jeden Monat", "due every month"), help: tr("Alles, was jeden Monat (oder öfter) abgebucht wird, z.B. Miete, Strom, Handy, Kredit.", "Everything debited every month (or more often), e.g. rent, electricity, phone, loan."), value: sums.regular, cls: "s1", details: details.regular },
+          { key: "special", label: tr("Sonderposten, umgelegt", "Special entries, spread"), hint: tr("auf die Monate verteilt", "spread across the months"), help: tr("Posten, die nicht jeden Monat kommen (z.B. Versicherung jährlich, GEZ vierteljährlich). Ihre Summe über 12 Monate geteilt durch 12. So viel solltest du jeden Monat dafür zurücklegen.", "Entries that don't come every month (e.g. yearly insurance). Their 12-month sum divided by 12: what you should put aside each month."), value: sums.special, cls: "s2", details: details.special },
+          { key: "budget", label: tr("Budgets", "Budgets"), hint: tr("variable Ausgaben", "variable spending"), help: tr("Monatsbudgets für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit.", "Monthly budgets for spending without fixed dates, e.g. groceries or leisure."), value: sums.budget, cls: "s3", details: details.budget },
         ],
         total
       )}
@@ -1099,23 +1219,28 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderCertaintySplit(rows) {
     if (!rows.length) return "";
     const sums = { sicher: 0, wahrscheinlich: 0, unsicher: 0 };
+    const details = { sicher: {}, wahrscheinlich: {}, unsicher: {} };
     for (const r of rows) {
       for (const e of r.entries || []) {
         if (e.amount >= 0 || e.status === "skipped" || e.budget) continue;
-        sums[e.certainty in sums ? e.certainty : "unsicher"] += -e.amount;
+        const key = e.certainty in sums ? e.certainty : "unsicher";
+        sums[key] += -e.amount;
+        this._addDetail(details[key], e, -e.amount);
       }
     }
     const total = sums.sicher + sums.wahrscheinlich + sums.unsicher;
     return `<div class="card">
-      <h3>${tr("Wie sicher sind die Ausgaben?", "How certain are the expenses?")}</h3>
-      <p class="hint">${tr(`Alle einzelnen Ausgaben der nächsten ${rows.length} Monate (ohne Budgets) nach Sicherheitsstufe.`, `All single expenses of the next ${rows.length} months (without budgets) by certainty.`)}</p>
+      <h3>${tr("Wie sicher sind die Ausgaben?", "How certain are the expenses?")}${this._help(tr("Jede Buchung hat eine Sicherheitsstufe. Sie wird sicher, wenn du die letzten Buchungen pünktlich mit gleichem Betrag bestätigt hast. Unsicher heißt: schwankt stark, zuletzt ausgefallen oder läuft bald aus.", "Every booking has a certainty level. It becomes certain once the last bookings were confirmed on time with the same amount. Uncertain means it varies a lot, was skipped recently or ends soon."))}</h3>
+      <p class="hint">${tr(`Alle einzelnen Ausgaben der nächsten ${rows.length} Monate zusammen (ohne Budgets). Tippe auf eine Stufe, um zu sehen, welche Posten dazugehören.`, `All single expenses of the next ${rows.length} months together (without budgets). Tap a level to see which entries belong to it.`)}</p>
       ${this._splitBar(
+        "cert",
         [
-          { label: certaintyLabel("sicher"), hint: tr("pünktlich bestätigt", "confirmed on time"), value: sums.sicher, cls: "c-sure" },
-          { label: certaintyLabel("wahrscheinlich"), hint: tr("noch ohne Bestätigung oder schwankend", "not confirmed yet or varying"), value: sums.wahrscheinlich, cls: "c-likely" },
-          { label: certaintyLabel("unsicher"), hint: tr("nicht im Kontostand eingerechnet", "not counted in the balance"), value: sums.unsicher, cls: "c-unsure" },
+          { key: "sicher", label: certaintyLabel("sicher"), hint: tr("pünktlich bestätigt", "confirmed on time"), value: sums.sicher, cls: "c-sure", details: details.sicher },
+          { key: "wahrscheinlich", label: certaintyLabel("wahrscheinlich"), hint: tr("noch nicht oft genug bestätigt oder schwankend", "not confirmed often enough yet, or varying"), value: sums.wahrscheinlich, cls: "c-likely", details: details.wahrscheinlich },
+          { key: "unsicher", label: certaintyLabel("unsicher"), hint: tr("zählt nicht im Kontostand", "not counted in the balance"), value: sums.unsicher, cls: "c-unsure", details: details.unsicher },
         ],
-        total
+        total,
+        { unit: "total", note: tr(`Summe der nächsten ${rows.length} Monate. Bestätige Buchungen in der Zeitleiste, damit sie sicher werden.`, `Sum of the next ${rows.length} months. Confirm bookings in the timeline to make them certain.`) }
       )}
     </div>`;
   }
@@ -1126,23 +1251,27 @@ class HaushaltsbuchPanel extends HTMLElement {
       const v = monthlyEquivalent(i);
       if (!v) continue;
       const key = presetOf(i.schedule);
-      (groups[key] ||= { value: 0, count: 0 }).value += v;
-      groups[key].count += 1;
+      const g = (groups[key] ||= { value: 0, items: {} });
+      g.value += v;
+      g.items[i.id] = { id: i.id, name: i.name, icon: i.icon, value: v, sub: `${this._moneyPlain(Number(i.current_amount ?? i.amount))} ${scheduleLabel(i)}` };
     }
     const list = Object.entries(groups).sort((a, b) => b[1].value - a[1].value);
     if (!list.length) return "";
     const max = list[0][1].value;
+    const total = list.reduce((a, [, g]) => a + g.value, 0);
     return `<div class="card">
-      <h3>${tr("Ausgaben nach Turnus", "Expenses by schedule")}</h3>
-      <p class="hint">${tr("Auf einen Monat umgerechnet: ein jährlicher Posten von 120 zählt hier mit 10 pro Monat.", "Converted to one month: a yearly entry of 120 counts as 10 per month.")}</p>
+      <h3>${tr("Was jeder Turnus pro Monat kostet", "What each schedule costs per month")}${this._help(tr("Jeder Posten wird auf einen Monat umgerechnet: eine jährliche Versicherung von 120 € zählt mit 10 € pro Monat, eine vierteljährliche Rechnung von 60 € mit 20 €. So lassen sich monatliche, jährliche und gleitende Posten vergleichen.", "Every entry is converted to one month: a yearly insurance of 120 counts as 10 per month, a quarterly bill of 60 as 20. That makes monthly, yearly and rolling entries comparable."))}</h3>
+      <p class="hint">${tr(`Deine Ausgaben gruppiert danach, wie oft sie kommen, umgerechnet auf einen Monat (zusammen ${this._moneyPlain(total)} pro Monat). Tippe auf eine Zeile für die Posten.`, `Your expenses grouped by how often they come, converted to one month (${this._moneyPlain(total)} per month in total). Tap a row for the entries.`)}</p>
       ${list
-        .map(
-          ([key, g]) => `<div class="cat-row">
-            <div class="cat-name">${esc(FREQUENCY_PRESETS.find((p) => p.key === key)[LANG].replace(/ \(.*\)$/, ""))}<small>${g.count} ${g.count === 1 ? tr("Posten", "entry") : tr("Posten", "entries")}</small></div>
+        .map(([key, g]) => {
+          const open = this._dashOpen === `freq:${key}`;
+          const count = Object.keys(g.items).length;
+          return `<div class="cat-row clickable ${open ? "open" : ""}" data-action="dash-toggle" data-key="freq:${key}" role="button" aria-expanded="${open}" tabindex="0">
+            <div class="cat-name">${esc(FREQUENCY_PRESETS.find((p) => p.key === key)[LANG].replace(/ \(.*\)$/, ""))}<small>${count} ${count === 1 ? tr("Posten", "entry") : tr("Posten", "entries")} · ${Math.round((g.value / total) * 100)} %</small></div>
             <div class="cat-bar"><span style="width:${(g.value / max) * 100}%"></span></div>
             <div class="cat-sum">${this._money(g.value)}<small>${tr("pro Monat", "per month")}</small></div>
-          </div>`
-        )
+          </div>${open ? this._renderDetails(g.items) : ""}`;
+        })
         .join("")}
     </div>`;
   }
@@ -1157,7 +1286,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (!list.length) return "";
     const max = list[0][1];
     return `<div class="card">
-      <h3>${tr("Größte Ausgaben", "Largest expenses")}</h3>
+      <h3>${tr("Größte Ausgaben", "Largest expenses")}${this._help(tr("Die Posten mit dem höchsten Betrag pro Monat, umgerechnet wie oben. Antippen öffnet den Posten.", "The entries with the highest amount per month, converted as above. Tap to open the entry."))}</h3>
       <p class="hint">${tr("Die acht Posten, die pro Monat umgerechnet am meisten kosten.", "The eight entries that cost the most per month.")}</p>
       ${list
         .map(
@@ -1180,7 +1309,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (!list.length) return "";
     const sum = list.reduce((a, e) => a + e.amount, 0);
     return `<div class="card">
-      <div class="row-between"><h3>${tr("Sonderposten der nächsten 3 Monate", "Special entries in the next 3 months")}</h3><b class="${sum < 0 ? "neg" : "pos"}">${this._money(sum, true)}</b></div>
+      <div class="row-between"><h3>${tr("Sonderposten der nächsten 3 Monate", "Special entries in the next 3 months")}${this._help(tr("Buchungen, die nicht jeden Monat kommen und deshalb auffallen, z.B. Jahresbeiträge oder ein Bonus. Was als Sonderposten zählt, stellst du im Tab Monate ein.", "Bookings that don't come every month and therefore stand out, e.g. yearly fees or a bonus. What counts as special is set in the Months tab."))}</h3><b class="${sum < 0 ? "neg" : "pos"}">${this._money(sum, true)}</b></div>
       ${list.map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: itemsById[e.item_id] })}`).join("")}
     </div>`;
   }
@@ -1669,6 +1798,17 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _onClick(ev) {
+    const help = ev.target.closest?.(".help");
+    if (help) {
+      // The ⓘ only explains; a tap shows (or hides) its text, nothing else opens.
+      ev.stopPropagation();
+      // A tap also fires mouseover first, which already opened the text.
+      if (this._helpFor === help && Date.now() - this._helpShownAt > 500) this._hideHelp();
+      else if (this._helpFor !== help) this._showHelp(help);
+      if (this._helpFor) this._helpByHover = false;
+      return;
+    }
+    this._hideHelp();
     const target = ev.target.closest("[data-action]");
     if (!target) return;
     const a = target.dataset.action;
@@ -1705,6 +1845,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._month = new Date(this._month.getFullYear(), this._month.getMonth() + Number(target.dataset.delta), 1);
         this._selectedDay = null;
         this._reload();
+        break;
+      case "dash-toggle":
+        this._dashOpen = this._dashOpen === target.dataset.key ? null : target.dataset.key;
+        this._render();
         break;
       case "toggle-month":
         this._openMonth = this._openMonth === target.dataset.month ? null : target.dataset.month;
@@ -1894,12 +2038,30 @@ const STYLES = `
   .split-value small { font-weight: 400; }
   .s1 { background: var(--viz-1); } .s2 { background: var(--viz-2); } .s3 { background: var(--viz-3); }
   .c-sure { background: var(--success-color, #43a047); } .c-likely { background: var(--warning-color, #ffa000); } .c-unsure { background: var(--secondary-text-color, #888); opacity: 0.6; }
-  .cat-row.clickable { cursor: pointer; }
+  .help { position: relative; display: inline-flex; align-items: center; justify-content: center; margin-left: 6px; width: 18px; height: 18px; font-size: 13px; font-weight: 400; color: var(--secondary-text-color); cursor: help; border-radius: 50%; vertical-align: 1px; }
+  .help:hover, .help:focus { color: var(--primary-color); outline: none; }
+  .help-tip { position: fixed; z-index: 20; max-width: min(300px, calc(100vw - 16px)); background: var(--card-background-color, #fff); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2); padding: 8px 10px; font-size: 12px; line-height: 1.45; pointer-events: none; }
+  .split-row.clickable, .cat-row.clickable { cursor: pointer; border-radius: 6px; }
+  .split-row.clickable:hover, .cat-row.clickable:hover { background: var(--secondary-background-color, rgba(0,0,0,.04)); }
+  .split-row.open, .cat-row.open { background: var(--secondary-background-color, rgba(0,0,0,.04)); }
+  .split-row { padding-left: 4px; padding-right: 4px; }
+  .chevron { color: var(--secondary-text-color); width: 12px; text-align: center; }
+  .split span[data-action], .pie svg [data-action] { cursor: pointer; }
+  .split span.active { outline: 2px solid var(--primary-text-color); outline-offset: 1px; }
+  .pie svg .active { stroke: var(--primary-text-color); stroke-width: 3; }
+  .details { margin: 4px 0 8px 22px; padding-left: 10px; border-left: 2px solid var(--divider-color); }
+  .details .hint { margin: 4px 0; }
+  .detail-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+  .detail-row:hover .detail-name { color: var(--primary-color); }
+  .detail-icon { display: inline-flex; color: var(--primary-color); }
+  .detail-name { flex: 1; font-size: 13px; }
+  .detail-name small, .detail-value small { display: block; color: var(--secondary-text-color); font-size: 11px; }
+  .detail-value { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .pie-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; margin-top: 8px; }
   .pie { position: relative; width: 180px; height: 180px; margin: 0 auto; flex-shrink: 0; }
   .pie svg path, .pie svg circle { stroke: var(--card-background-color, #fff); stroke-width: 2; stroke-linejoin: round; }
   .pie svg circle { stroke: currentColor; }
-  .pie-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 15px; font-weight: 500; text-align: center; }
+  .pie-center { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 15px; font-weight: 500; text-align: center; }
   .pie-center small { font-size: 11px; font-weight: 400; color: var(--secondary-text-color); }
   .pie-list { flex: 1; min-width: 220px; }
   path.p1 { fill: var(--viz-1); } path.p2 { fill: var(--viz-2); } path.p3 { fill: var(--viz-3); } path.p4 { fill: var(--viz-4); } path.p5 { fill: var(--viz-5); } path.p-other { fill: var(--viz-other); }
