@@ -36,7 +36,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 - **Confirm** due bookings as *booked* (optionally with the real date and amount) or *skipped*
 - **Weekends and bank holidays**: bookings move to the next business day, salary to the previous one (configurable per entry)
 - **Monthly overview** with income, expenses and balance for 12 months. **Special entries** (anything that does not occur every month, e.g. insurance, bonus) are highlighted. Below that, **spending per category**.
-- **Overview** dashboard with key figures, balance trend and a pie chart by category
+- **Overview** dashboard with key figures and a pie chart by category
 - **Search** in entries and **confirm all open bookings at once**
 - **Templates** for typical entries (salary, rent, electricity, internet, mobile, insurance, vehicle tax, streaming, fuel, tyre change …)
 - **Export and import** your own entries as a JSON file, e.g. as a backup or to move to another HA instance
@@ -210,7 +210,6 @@ Tap a month to expand its bookings. At the bottom, **spending per category**: la
 
 The dashboard at a glance: balance, expected balance at month end, income and expenses per month, what is left per month and the lowest balance of the next 90 days. Below:
 
-- **Balance trend** for the next 90 days, expected and certain-only. Hover or tap the chart to see single days with their bookings.
 - **Where most of the money goes:** a pie chart of expenses by category (the five largest, the rest under "Others").
 - **Fixed costs, special entries and budgets** as shares of an average month.
 - **How certain are the expenses?** Share of certain, likely and uncertain expenses.

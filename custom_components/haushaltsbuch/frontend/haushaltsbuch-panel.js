@@ -255,7 +255,6 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._incognito = false;
     }
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
-    this.shadowRoot.addEventListener("pointermove", (ev) => this._onTrendPointer(ev));
     this.shadowRoot.addEventListener("mouseover", (ev) => {
       const help = ev.target.closest?.(".help");
       if (help && help !== this._helpFor) {
@@ -267,8 +266,6 @@ class HaushaltsbuchPanel extends HTMLElement {
       // Only a text opened by hovering closes when the mouse leaves; a tapped one stays.
       if (this._helpByHover && ev.target.closest?.(".help") && !ev.relatedTarget?.closest?.(".help")) this._hideHelp();
     });
-    this.shadowRoot.addEventListener("pointerdown", (ev) => this._onTrendPointer(ev));
-    this.shadowRoot.addEventListener("pointerleave", (ev) => this._onTrendPointer(ev), true);
     window.addEventListener("scroll", () => this._hideHelp(), { passive: true, capture: true });
     window.addEventListener("resize", () => {
       if (this._view !== "dashboard" || !this.isConnected) return;
@@ -938,116 +935,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos", tr("Einnahmen pro Monat minus Ausgaben pro Monat. So viel kannst du im Schnitt sparen.", "Income per month minus expenses per month: what you can save on average."))}
       ${tile(tr("Tiefster Stand (90 Tage)", "Lowest balance (90 days)"), lowest ? this._money(lowest.balance_likely) : "—", lowest ? fmtDate(lowest.date) : "", lowest && lowest.balance_likely < 0 ? "neg" : "", tr("Der niedrigste erwartete Kontostand in den nächsten 90 Tagen, meist kurz vor dem Gehalt.", "The lowest expected balance in the next 90 days, usually just before payday."))}
     </div></div>`;
-    return kpis + this._renderTrend(days) + this._renderCategoryPie(rows) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
-  }
-
-  _renderTrend(days) {
-    const pts = days.filter((d) => d.balance_likely !== null);
-    if (pts.length < 2) {
-      return `<div class="card"><h3>${tr("Kontostand-Verlauf", "Balance trend")}</h3><div class="empty">${tr("Setze zuerst einen Kontostand, dann erscheint hier der Verlauf der nächsten 90 Tage.", "Set a balance first to see the next 90 days here.")}</div></div>`;
-    }
-    const W = Math.max(280, Math.min(this.clientWidth || 400, 900) - 64);
-    const H = 200;
-    const pad = { l: 8, r: 8, t: 12, b: 22 };
-    const vals = pts.flatMap((d) => [d.balance_likely, d.balance_sure]);
-    let lo = Math.min(...vals, 0);
-    let hi = Math.max(...vals);
-    const span = hi - lo || 1;
-    hi += span * 0.08;
-    lo -= lo < 0 ? span * 0.08 : 0;
-    const x = (i) => pad.l + (i / (pts.length - 1)) * (W - pad.l - pad.r);
-    const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
-    const path = (key) => pts.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join("");
-    const area = `${path("balance_likely")}L${x(pts.length - 1).toFixed(1)},${y(lo).toFixed(1)}L${x(0).toFixed(1)},${y(lo).toFixed(1)}Z`;
-    const ticks = [];
-    pts.forEach((d, i) => {
-      if (parseIso(d.date).getDate() === 1) ticks.push(i);
-    });
-    const gridVals = [lo, (lo + hi) / 2, hi].map((v) => Math.round(v / 100) * 100);
-    this._trendGeom = { pts, W, H, x, y };
-    const last = pts[pts.length - 1];
-    return `<div class="card">
-      <h3>${tr("Kontostand-Verlauf", "Balance trend")}${this._help(tr("Ausgehend von deinem zuletzt gesetzten Kontostand wird jede kommende Buchung abgezogen oder addiert. Erwartet: sichere und wahrscheinliche Buchungen und Budgets. Vorsichtig: nur sichere Einnahmen, aber alle erwarteten Ausgaben.", "Starting from the balance you last set, every upcoming booking is added or subtracted. Expected: certain and likely bookings and budgets. Cautious: only certain income, but every expected expense."))}</h3>
-      <div class="legend">
-        <span><i class="swatch line s1"></i>${tr("erwartet", "expected")}</span>
-        <span><i class="swatch line s2 dashed"></i>${tr("vorsichtig", "cautious")}</span>
-      </div>
-      <div class="trend" style="height:${H}px">
-        <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${tr("Erwarteter Kontostand der nächsten 90 Tage", "Expected balance over the next 90 days")}">
-          ${gridVals.map((v) => `<line class="grid" x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}"></line><text class="axis" x="${W - pad.r}" y="${y(v) - 4}" text-anchor="end">${this._compact(v)}</text>`).join("")}
-          ${lo < 0 ? `<line class="zero" x1="${pad.l}" x2="${W - pad.r}" y1="${y(0)}" y2="${y(0)}"></line>` : ""}
-          ${ticks.map((i) => `<line class="tick" x1="${x(i)}" x2="${x(i)}" y1="${H - pad.b}" y2="${H - pad.b + 4}"></line><text class="axis" x="${x(i)}" y="${H - 6}" text-anchor="middle">${monthName(parseIso(pts[i].date).getMonth(), "short")}</text>`).join("")}
-          <path class="area" d="${area}"></path>
-          <path class="line s2 dashed" d="${path("balance_sure")}"></path>
-          <path class="line s1" d="${path("balance_likely")}"></path>
-          <g class="cross" hidden><line class="cross-line" y1="${pad.t}" y2="${H - pad.b}"></line><circle class="dot s1" r="4"></circle><circle class="dot s2" r="4"></circle></g>
-          <rect class="hit" x="0" y="0" width="${W}" height="${H}"></rect>
-        </svg>
-        <div class="tip" hidden></div>
-      </div>
-      <p class="hint">${tr(`<b>Erwartet</b> rechnet alle sicheren und wahrscheinlichen Buchungen und Budgets ein. <b>Vorsichtig</b> zählt nur sichere Einnahmen, aber alle erwarteten Ausgaben, liegt also nie darüber. In 90 Tagen erwartet: <b>${this._money(last.balance_likely)}</b>. Fahre über das Diagramm oder tippe darauf für einzelne Tage.`, `<b>Expected</b> counts all certain and likely bookings and budgets. <b>Cautious</b> counts only certain income but every expected expense, so it is never higher. Expected in 90 days: <b>${this._money(last.balance_likely)}</b>. Hover or tap the chart for single days.`)}</p>
-    </div>`;
-  }
-
-  _compact(v) {
-    try {
-      return new Intl.NumberFormat(this._numberLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(v);
-    } catch (err) {
-      return String(Math.round(v));
-    }
-  }
-
-  _onTrendPointer(ev) {
-    const box = ev.target?.closest?.(".trend");
-    const g = this._trendGeom;
-    if (!box || !g) return;
-    const cross = box.querySelector(".cross");
-    const tip = box.querySelector(".tip");
-    if (ev.type === "pointerleave") {
-      if (ev.target === box) {
-        cross.setAttribute("hidden", "");
-        tip.hidden = true;
-      }
-      return;
-    }
-    const rect = box.querySelector("svg").getBoundingClientRect();
-    const px = ((ev.clientX - rect.left) / rect.width) * g.W;
-    let i = Math.round(((px - g.x(0)) / (g.x(g.pts.length - 1) - g.x(0))) * (g.pts.length - 1));
-    i = Math.max(0, Math.min(g.pts.length - 1, i));
-    const d = g.pts[i];
-    const cx = g.x(i);
-    cross.removeAttribute("hidden");
-    cross.querySelector(".cross-line").setAttribute("x1", cx);
-    cross.querySelector(".cross-line").setAttribute("x2", cx);
-    const [d1, d2] = cross.querySelectorAll(".dot");
-    d1.setAttribute("cx", cx);
-    d1.setAttribute("cy", g.y(d.balance_likely));
-    d2.setAttribute("cx", cx);
-    d2.setAttribute("cy", g.y(d.balance_sure));
-    const moves = d.entries.filter((e) => e.status !== "skipped");
-    tip.innerHTML = `<b>${this._dateLabel(d.date)}</b>
-      <div class="tip-row"><i class="swatch line s1"></i>${tr("erwartet", "expected")}<span>${this._money(d.balance_likely)}</span></div>
-      <div class="tip-row"><i class="swatch line s2 dashed"></i>${tr("vorsichtig", "cautious")}<span>${this._money(d.balance_sure)}</span></div>
-      ${moves.slice(0, 3).map((e) => `<div class="tip-row muted">${esc(e.name)}<span>${this._money(e.amount, true)}</span></div>`).join("")}${moves.length > 3 ? `<div class="tip-row muted">+${moves.length - 3}</div>` : ""}`;
-    tip.hidden = false;
-    const left = (cx / g.W) * rect.width;
-    tip.style.left = `${Math.min(Math.max(left - tip.offsetWidth / 2, 0), rect.width - tip.offsetWidth)}px`;
-  }
-
-  /** Thin segmented bar with a list of parts below (name, amount, share). */
-  _splitBar(parts, total) {
-    const shown = parts.filter((p) => p.value > 0);
-    if (!shown.length || total <= 0) return `<div class="empty">${tr("Keine Daten.", "No data.")}</div>`;
-    return `<div class="split" role="img" aria-label="${esc(shown.map((p) => `${p.label} ${Math.round((p.value / total) * 100)} %`).join(", "))}">
-        ${shown.map((p) => `<span class="${p.cls}" style="flex:${p.value}" title="${esc(p.label)}: ${Math.round((p.value / total) * 100)} %"></span>`).join("")}
-      </div>
-      <div class="split-list">
-        ${shown
-          .map(
-            (p) => `<div class="split-row"><i class="swatch ${p.cls}"></i><div class="split-name">${p.label}${p.hint ? `<small>${p.hint}</small>` : ""}</div><div class="split-value">${this._money(p.value)}<small>${Math.round((p.value / total) * 100)} %</small></div></div>`
-          )
-          .join("")}
-      </div>`;
+    return kpis + this._renderCategoryPie(rows) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
   }
 
   _showHelp(el) {
@@ -2002,31 +1890,7 @@ const STYLES = `
   .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
   @media (min-width: 700px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   .kpi-value { font-size: 22px; font-weight: 500; margin: 2px 0; }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--secondary-text-color); margin: 8px 0 4px; }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-  .swatch.line { width: 16px; height: 0; border-top: 2px solid var(--viz-1); border-radius: 0; }
-  .swatch.line.s2 { border-top-color: var(--viz-2); }
-  .swatch.line.dashed { border-top-style: dashed; }
-  .trend { position: relative; margin-top: 4px; touch-action: pan-y; }
-  .trend svg { display: block; overflow: visible; }
-  .trend .grid { stroke: var(--divider-color, rgba(0,0,0,.12)); stroke-width: 1; }
-  .trend .zero { stroke: var(--error-color, #db4437); stroke-width: 1; stroke-dasharray: 3 3; }
-  .trend .tick { stroke: var(--divider-color, rgba(0,0,0,.2)); }
-  .trend .axis { fill: var(--secondary-text-color); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .trend .area { fill: var(--viz-1); opacity: 0.08; }
-  .trend .line { fill: none; stroke: var(--viz-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .trend .line.s2 { stroke: var(--viz-2); }
-  .trend .line.dashed { stroke-dasharray: 5 4; }
-  .trend .cross-line { stroke: var(--secondary-text-color); stroke-width: 1; opacity: 0.5; }
-  .trend .dot { fill: var(--viz-1); stroke: var(--card-background-color, #fff); stroke-width: 2; }
-  .trend .dot.s2 { fill: var(--viz-2); }
-  .trend .hit { fill: transparent; cursor: crosshair; }
-  .tip { position: absolute; top: 0; min-width: 170px; max-width: 240px; background: var(--card-background-color, #fff); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12px; pointer-events: none; }
-  .tip b { display: block; margin-bottom: 4px; }
-  .tip-row { display: flex; align-items: center; gap: 6px; }
-  .tip-row span { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
-  .tip-row.muted { color: var(--secondary-text-color); }
   .split { display: flex; gap: 2px; height: 8px; margin: 12px 0 8px; }
   .split span { border-radius: 4px; min-width: 2px; }
   .split-list { display: flex; flex-direction: column; }
@@ -2068,7 +1932,6 @@ const STYLES = `
   circle.p1 { color: var(--viz-1); } circle.p2 { color: var(--viz-2); } circle.p3 { color: var(--viz-3); } circle.p4 { color: var(--viz-4); } circle.p5 { color: var(--viz-5); } circle.p-other { color: var(--viz-other); }
   .swatch.p1 { background: var(--viz-1); } .swatch.p2 { background: var(--viz-2); } .swatch.p3 { background: var(--viz-3); } .swatch.p4 { background: var(--viz-4); } .swatch.p5 { background: var(--viz-5); } .swatch.p-other { background: var(--viz-other); }
   .cat-icon { display: inline-flex; vertical-align: -3px; margin-right: 6px; color: var(--primary-color); }
-  :host(.incognito) .trend .axis, :host(.incognito) .tip-row span { filter: blur(6px); }
   .balance { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; }
   .balance > button { margin-left: auto; }
   .totals { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 12px; }

@@ -35,7 +35,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
 - **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat und in Zeitleiste und Kalender gelb markiert. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
-- **Übersicht** als Dashboard mit Kennzahlen, Kontostand-Verlauf und Kreisdiagramm nach Kategorie
+- **Übersicht** als Dashboard mit Kennzahlen und Kreisdiagramm nach Kategorie
 - **Suche** in den Posten und **alle offenen Buchungen auf einmal bestätigen**
 - **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Streaming-Abos, Gehalt, Tanken, Räderwechsel …)
 - **Export und Import** der eigenen Posten als JSON-Datei, z.B. als Sicherung oder zum Umzug auf eine andere HA-Instanz. Beim Import wählbar: hinzufügen (Doppelte werden übersprungen) oder ersetzen
@@ -220,7 +220,6 @@ Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welch
 
 Das Dashboard auf einen Blick: Kontostand, erwarteter Stand zum Monatsende, Einnahmen und Ausgaben pro Monat, was pro Monat übrig bleibt und der tiefste Stand der nächsten 90 Tage. Darunter:
 
-- **Kontostand-Verlauf** der nächsten 90 Tage, erwartet und nur mit sicheren Posten. Fahre über das Diagramm oder tippe darauf, um einzelne Tage mit ihren Buchungen zu sehen.
 - **Wohin das meiste Geld fließt:** Kreisdiagramm der Ausgaben nach Kategorie (die fünf größten, der Rest unter „Weitere“).
 - **Fixkosten, Sonderposten und Budgets** im Verhältnis, pro Monat gemittelt.
 - **Wie sicher sind die Ausgaben?** Anteil sicherer, wahrscheinlicher und unsicherer Ausgaben.
