@@ -5,9 +5,9 @@ Zeigt dir in Home Assistant, wann welche Abbuchung oder Einnahme ansteht und wie
 Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten bleiben in deinem Home Assistant (sie landen automatisch in den HA-Backups).
 
 <p>
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/01-zeitleiste.png" alt="Zeitleiste" width="240">
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/06-kalender.png" alt="Kalender" width="240">
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/10-monate.png" alt="Monatsübersicht" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/01-zeitleiste.png" alt="Zeitleiste" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/06-kalender.png" alt="Kalender" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/10-monate.png" alt="Monatsübersicht" width="240">
 </p>
 
 **Inhalt:** [Funktionen](#funktionen) · [Installation](#installation-über-hacs) · [So funktioniert es](#so-funktioniert-das-haushaltsbuch) · [Anleitung](#anleitung) · [Die Knöpfe einer Buchung](#die-knöpfe-einer-buchung) · [Haushalt](#gemeinsames-haushaltsbuch) · [Gut zu wissen](#gut-zu-wissen)
@@ -33,7 +33,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 ## Installation über HACS
 
 1. HACS öffnen → oben rechts ⋮ → **Benutzerdefinierte Repositories**
-2. `https://github.com/FabianWeyerstall/ha-Abo-app` als Typ **Integration** hinzufügen
+2. `https://github.com/FabianWeyerstall/ha-haushaltsbuch` als Typ **Integration** hinzufügen
 3. **Haushaltsbuch** installieren und Home Assistant neu starten
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Haushaltsbuch**
 5. In der Seitenleiste erscheint **Haushaltsbuch**, auch in der Home-Assistant-App auf dem iPhone
@@ -88,8 +88,8 @@ Tab **Zeitleiste** → **Kontostand setzen**. Trag den aktuellen Stand aus deine
 Tab **Posten** → **+ Neuer Posten**.
 
 <p>
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/08-neuer-posten.png" alt="Neuer Posten mit Vorlage" width="240">
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/09-posten-details.png" alt="Vertrag und Schwankung" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/08-neuer-posten.png" alt="Neuer Posten mit Vorlage" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/09-posten-details.png" alt="Vertrag und Schwankung" width="240">
 </p>
 
 Tab **Posten** → **+ Neuer Posten**.
@@ -126,13 +126,13 @@ Posten öffnen → **Vertrag und Kündigung** → Häkchen **Vertragslaufzeit er
 
 Muss in den nächsten 60 Tagen gekündigt werden, erscheint der Vertrag in der Zeitleiste unter **Kündigungsfristen** mit dem Datum, bis wann die Kündigung da sein muss. In der Postenliste steht „kündbar bis …“.
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/02-zeitleiste-kuendigung.png" alt="Kündigungsfristen in der Zeitleiste" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/02-zeitleiste-kuendigung.png" alt="Kündigungsfristen in der Zeitleiste" width="260">
 
 ### Push-Nachricht bei Kündigungsfristen
 
 Das Haushaltsbuch prüft jeden Morgen um 9 Uhr alle Verträge. Muss einer in **30, 7 oder 1 Tag(en)** gekündigt sein, löst es in Home Assistant das Ereignis `haushaltsbuch_kuendigungsfrist` aus. Eine fertige Automationsvorlage (Blueprint) macht daraus eine Push-Nachricht:
 
-1. [Blueprint importieren](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FFabianWeyerstall%2Fha-Abo-app%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fhaushaltsbuch%2Fkuendigungsfrist.yaml) (oder unter **Einstellungen → Automationen & Szenen → Blueprints → Blueprint importieren** diese Adresse eintragen: `https://github.com/FabianWeyerstall/ha-Abo-app/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml`)
+1. [Blueprint importieren](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FFabianWeyerstall%2Fha-haushaltsbuch%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fhaushaltsbuch%2Fkuendigungsfrist.yaml) (oder unter **Einstellungen → Automationen & Szenen → Blueprints → Blueprint importieren** diese Adresse eintragen: `https://github.com/FabianWeyerstall/ha-haushaltsbuch/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml`)
 2. Auf den Blueprint tippen, dein Handy auswählen, speichern
 3. Testen: **Entwicklerwerkzeuge → Aktionen → „Haushaltsbuch: Kündigungsfristen melden“** mit **Alle kommenden** ausführen. Dann kommt sofort für jeden Vertrag, der in den nächsten 60 Tagen kündbar ist, eine Nachricht.
 
@@ -141,8 +141,8 @@ Das Ereignis enthält `name`, `cancel_by`, `contract_end`, `days_left`, `renews`
 ### 3. Die Zeitleiste lesen
 
 <p>
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/01-zeitleiste.png" alt="Zeitleiste oben" width="240">
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/03-zeitleiste-tage.png" alt="Zeitleiste Tage" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/01-zeitleiste.png" alt="Zeitleiste oben" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/03-zeitleiste-tage.png" alt="Zeitleiste Tage" width="240">
 </p>
 
 - Oben: dein letzter Kontostand und der erwartete Stand am Ende des Zeitraums.
@@ -156,8 +156,8 @@ Das Ereignis enthält `name`, `cancel_by`, `contract_end`, `days_left`, `renews`
 Tippst du in der Zeitleiste oder im Kalender auf eine Buchung, öffnet sich dieses Fenster. Es betrifft immer **nur diese eine Buchung**. Oben kannst du **Datum** und **Betrag** anpassen, bevor du einen Knopf drückst.
 
 <p>
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/04-buchung-bestaetigen.png" alt="Fällige Buchung bestätigen" width="240">
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/05-termin-festlegen.png" alt="Termin für eine kommende Buchung festlegen" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/04-buchung-bestaetigen.png" alt="Fällige Buchung bestätigen" width="240">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/05-termin-festlegen.png" alt="Termin für eine kommende Buchung festlegen" width="240">
 </p>
 
 | Knopf | Wofür | Was passiert |
@@ -186,19 +186,19 @@ Wer das Tanken nicht einzeln pflegen will, legt stattdessen ein **Budget pro Mon
 
 ### 4. Kalender
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/06-kalender.png" alt="Kalender" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/06-kalender.png" alt="Kalender" width="260">
 
 Die Monatsansicht zeigt an jedem Tag die Symbole der Buchungen und die Tagessumme. Ohne Auswahl stehen darunter alle Buchungen des Monats. Tippst du auf einen Tag, siehst du nur diesen Tag. Mit **ganzer Monat** kommst du zurück zur Monatsliste. Ausgefallene Buchungen werden im Kalender nicht gezeigt.
 
 ### 5. Posten
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/07-posten.png" alt="Postenliste" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/07-posten.png" alt="Postenliste" width="260">
 
 Alle Posten nach Kategorie. Oben siehst du Einnahmen und Ausgaben pro Monat und die Ausgaben pro Jahr. Dafür werden alle wiederkehrenden Posten auf einen Monat umgerechnet, ein jährlicher Posten mit 120 € zählt also mit 10 € pro Monat. Einmalige Posten zählen hier nicht mit. Über das Suchfeld findest du Posten nach Name, Kategorie oder Notiz.
 
 ### 6. Monate
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/10-monate.png" alt="Monatsübersicht" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/10-monate.png" alt="Monatsübersicht" width="260">
 
 Für die nächsten 12 Monate stehen hier Einnahmen (grün) und Ausgaben (rot) als Balken. Volle Balken sind sichere und wahrscheinliche Buchungen, der helle Zusatz sind unsichere. Rechts steht der Saldo des Monats. So siehst du sofort, in welchem Monat z.B. Versicherungen und GEZ zusammenkommen.
 
@@ -214,7 +214,7 @@ Jeder Home-Assistant-Nutzer hat seine eigenen, privaten Posten und seinen eigene
 - Auch HA-Admins sehen keine privaten Posten anderer Nutzer.
 - Optional pro Haushalt: ein **Kalender** und **Sensoren** (nächste Ausgabe, nächste Einnahme, Kontostand zum Monatsende) für Dashboards und Automationen. Diese Entitäten sind für alle HA-Nutzer sichtbar, daher standardmäßig aus.
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/11-haushalt.png" alt="Haushalt" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/11-haushalt.png" alt="Haushalt" width="260">
 
 Tab **Haushalt** → **+ Haushalt anlegen**, Namen vergeben und andere HA-Nutzer auswählen. Danach beim Bearbeiten eines Postens unter **Sichtbar für** den Haushalt wählen. Oben rechts wechselst du zwischen „Meine Posten“ und dem Haushalt. Der Haushalt hat einen eigenen Kontostand, z.B. für ein Gemeinschaftskonto. Ein Posten gehört immer zu genau einem Haushalt oder ist privat.
 
@@ -224,7 +224,7 @@ Tab **Posten** → **Exportieren** speichert deine eigenen Posten als JSON-Datei
 
 ## Inkognito-Modus
 
-<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-Abo-app/main/docs/images/12-inkognito.png" alt="Inkognito-Modus" width="260">
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/12-inkognito.png" alt="Inkognito-Modus" width="260">
 
 Das Auge oben in der Leiste macht alle Beträge und Kontostände unscharf, auch in den Formularen. Praktisch, wenn du die App jemandem zeigen willst. Ein weiterer Tipp macht sie wieder sichtbar. Das Gerät merkt sich die Einstellung, bis du sie wieder ausschaltest.
 

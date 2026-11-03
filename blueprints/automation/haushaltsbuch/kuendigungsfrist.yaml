@@ -6,7 +6,7 @@ blueprint:
     Haushaltsbuch prüft das jeden Morgen um 9 Uhr. Zum Testen die Aktion
     „Haushaltsbuch: Kündigungsfristen melden“ mit „Alle kommenden“ ausführen.
   domain: automation
-  source_url: https://github.com/FabianWeyerstall/ha-Abo-app/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml
+  source_url: https://github.com/FabianWeyerstall/ha-haushaltsbuch/blob/main/blueprints/automation/haushaltsbuch/kuendigungsfrist.yaml
   input:
     notify_device:
       name: Handy
