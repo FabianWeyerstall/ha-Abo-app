@@ -67,6 +67,24 @@ function isRegular(item) {
   return preset === "monthly" || preset === "weekly" || preset === "rolling" || preset === "budget";
 }
 
+// Months between two bookings (Infinity for one-off items, 0 for frequent ones).
+function intervalMonths(item) {
+  const s = item?.schedule || {};
+  if (s.frequency === "once") return Infinity;
+  if (s.frequency === "monthly") return s.interval || 1;
+  if (s.frequency === "yearly") return 12 * (s.interval || 1);
+  if (s.frequency === "fixed_dates") return 12 / Math.max(1, (s.dates || []).length);
+  return 0;
+}
+
+const SPECIAL_OPTIONS = [
+  [2, "alles, was nicht jeden Monat kommt"],
+  [3, "ab vierteljährlich"],
+  [6, "ab halbjährlich"],
+  [12, "nur jährlich und einmalig"],
+  [999, "nur einmalige Posten"],
+];
+
 function scheduleLabel(item) {
   const s = item.schedule || {};
   const preset = presetOf(s);
@@ -256,7 +274,18 @@ class HaushaltsbuchPanel extends HTMLElement {
   // Item object when the booking belongs to a special (not monthly) item, else null.
   _specialOf(e) {
     const item = this._state.items.find((i) => i.id === e.item_id);
-    return item && !isRegular(item) ? item : null;
+    return this._isSpecial(item, e.amount) ? item : null;
+  }
+
+  // Whether a booking counts as special under the user's settings.
+  _isSpecial(item, amount) {
+    if (!item || isRegular(item)) return false;
+    const st = this._state.user.settings || {};
+    const minMonths = st.special_min_months ?? 2;
+    const minAmount = st.special_min_amount ?? 0;
+    const months = intervalMonths(item);
+    if (minMonths >= 999 ? months !== Infinity : months < minMonths) return false;
+    return Math.abs(amount ?? item.current_amount ?? item.amount) >= minAmount;
   }
 
   _scopeItems() {
@@ -542,17 +571,18 @@ class HaushaltsbuchPanel extends HTMLElement {
     };
     return `<div class="card">
       <h3>Monatsübersicht</h3>
-      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. <span class="special-pill inline">★ Sonderposten</span> sind alles, was nicht jeden Monat kommt (vierteljährlich, jährlich, einmalig …). Tippe auf einen Monat für die einzelnen Buchungen.</p>
+      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.</p>
+      ${this._renderSpecialSettings()}
       <div class="months">
         ${rows
           .map((r) => {
             const [y, m] = r.month.split("-").map(Number);
             const open = this._openMonth === r.month;
             const entries = r.entries || [];
-            const special = entries.filter((e) => !isRegular(itemsById[e.item_id]));
-            const regular = entries.filter((e) => isRegular(itemsById[e.item_id]));
+            const special = entries.filter((e) => this._isSpecial(itemsById[e.item_id], e.amount));
+            const regular = entries.filter((e) => !this._isSpecial(itemsById[e.item_id], e.amount));
             const specialSum = special.reduce((a, e) => a + e.amount, 0);
-            const entryRow = (e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: !isRegular(itemsById[e.item_id]) && itemsById[e.item_id] })}`;
+            const entryRow = (e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: this._isSpecial(itemsById[e.item_id], e.amount) && itemsById[e.item_id] })}`;
             return `<div class="month-block">
               <button class="month-row ${open ? "open" : ""}" data-action="toggle-month" data-month="${r.month}" aria-expanded="${open}">
                 <div class="month-name">${MONTHS[m - 1].slice(0, 3)} ${String(y).slice(2)}</div>
@@ -574,6 +604,28 @@ class HaushaltsbuchPanel extends HTMLElement {
       </div>
     </div>
     ${this._renderCategoryTotals(rows)}`;
+  }
+
+  _renderSpecialSettings() {
+    const st = this._state.user.settings || {};
+    const minMonths = st.special_min_months ?? 2;
+    return `<div class="special-settings">
+      <span class="special-pill inline">★ Sonderposten</span>
+      <select data-change="special-months" aria-label="Sonderposten ab Turnus">
+        ${SPECIAL_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === minMonths ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+      <label class="inline-amount">ab<input type="number" min="0" step="1" inputmode="decimal" data-change="special-amount" value="${st.special_min_amount || 0}" aria-label="Sonderposten ab Betrag"> ${esc(this._state.currency === "EUR" ? "€" : this._state.currency)}</label>
+    </div>`;
+  }
+
+  _saveSpecialSettings(patch) {
+    const st = { special_min_months: 2, special_min_amount: 0, ...(this._state.user.settings || {}), ...patch };
+    this._state.user.settings = st;
+    this._render();
+    this._ws("settings", { settings: st }).catch((err) => {
+      this._error = err.message || String(err);
+      this._render();
+    });
   }
 
   _renderCategoryTotals(rows) {
@@ -1017,6 +1069,10 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._dialog.item = this._readItemForm(form);
       this._dialog.preset = el.value;
       this._render();
+    } else if (kind === "special-months") {
+      this._saveSpecialSettings({ special_min_months: Number(el.value) });
+    } else if (kind === "special-amount") {
+      this._saveSpecialSettings({ special_min_amount: Number(el.value) || 0 });
     } else if (kind === "import-file") {
       this._readImportFile(el);
     } else if (kind === "entities") {
@@ -1219,6 +1275,10 @@ const STYLES = `
   .chip.skipped { --chip: var(--secondary-text-color); }
   .chip.shared { --chip: var(--primary-color); }
   .day.past { opacity: 0.6; }
+  .special-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 12px; font-size: 13px; }
+  .special-settings select { width: auto; flex: 1 1 180px; padding: 4px 8px; font-size: 13px; }
+  .inline-amount { flex-direction: row; align-items: center; gap: 6px; color: var(--primary-text-color); }
+  .inline-amount input { width: 80px; padding: 4px 8px; font-size: 13px; }
   .chip.budget { --chip: var(--info-color, #039be5); }
   .chip.contract { --chip: var(--primary-color); }
   .chip.contract.urgent { --chip: var(--error-color, #db4437); }

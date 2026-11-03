@@ -45,6 +45,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_delete_household,
         ws_export,
         ws_import,
+        ws_settings,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -350,3 +351,13 @@ async def ws_export(hass, connection, msg, data):
 async def ws_import(hass, connection, msg, data):
     result = data.book.import_items(connection.user.id, msg["data"], msg["replace"])
     return (result, True)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/settings", vol.Required("settings"): dict}
+)
+@websocket_api.async_response
+@_handler
+async def ws_settings(hass, connection, msg, data):
+    data.book.set_user_settings(connection.user.id, msg["settings"])
+    return (None, True)
