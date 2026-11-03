@@ -1320,7 +1320,11 @@ class HaushaltsbuchPanel extends HTMLElement {
           <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> ${tr("Enddatum festlegen", "Set an end date")}</label>
           ${hasEnd ? `<input name="end_date" type="date" aria-label="${tr("Enddatum", "End date")}" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
         </div>` : ""}
-        ${item.direction === "income" && preset !== "once" && preset !== "budget" ? `<label class="check full"><input type="checkbox" name="salary_cycle" ${dis} ${d.salaryCycle ?? (item.id && item.id === this._state.user.settings?.salary_item_id) ? "checked" : ""}> ${tr("Mein Monat beginnt mit dieser Einnahme (Gehalt)", "My month starts with this income (salary)")}${this._help(tr("Dann laufen Monatsübersicht und Auswertungen von Gehalt zu Gehalt statt vom 1. bis zum Monatsende. Ein Gehalt nach dem 15. zählt zum Folgemonat, weil es dessen Abbuchungen bezahlt.", "The monthly overview and the figures then run from payday to payday instead of the 1st to the month end. A salary paid after the 15th counts for the next month, because it pays that month's bills."))}</label>` : ""}
+        ${(() => {
+          const salaryOk = item.direction === "income" && preset !== "once" && preset !== "budget";
+          const checked = salaryOk && (d.salaryCycle ?? (item.id && item.id === this._state.user.settings?.salary_item_id));
+          return `<label class="check full ${salaryOk ? "" : "muted"}"><input type="checkbox" name="salary_cycle" ${dis || (salaryOk ? "" : "disabled")} ${checked ? "checked" : ""}> <span>${tr("Mein Monat beginnt mit dieser Einnahme (Gehalt)", "My month starts with this income (salary)")}${salaryOk ? "" : `<small>${tr("nur bei wiederkehrenden Einnahmen", "only for recurring income")}</small>`}</span>${this._help(tr("Dann laufen Monatsübersicht und Auswertungen von Gehalt zu Gehalt statt vom 1. bis zum Monatsende. Ein Gehalt nach dem 15. zählt zum Folgemonat, weil es dessen Abbuchungen bezahlt. Geht nur bei wiederkehrenden Einnahmen, nicht bei Ausgaben, einmaligen Posten oder Budgets.", "The monthly overview and the figures then run from payday to payday instead of the 1st to the month end. A salary paid after the 15th counts for the next month, because it pays that month's bills. Only for recurring income, not for expenses, one-off entries or budgets."))}</label>`;
+        })()}
       </div>
       ${preset !== "once" ? this._renderPriceChanges(item, dis) : ""}
       ${preset !== "once" && preset !== "budget" ? this._renderContractFields(d, dis) : ""}
@@ -1545,7 +1549,7 @@ class HaushaltsbuchPanel extends HTMLElement {
   _readItemForm(form) {
     const f = new FormData(form);
     const salaryBox = form.querySelector('[name="salary_cycle"]');
-    if (salaryBox) this._dialog.salaryCycle = salaryBox.checked;
+    if (salaryBox && !salaryBox.disabled) this._dialog.salaryCycle = salaryBox.checked;
     const preset = FREQUENCY_PRESETS.find((p) => p.key === f.get("preset"));
     const schedule = { frequency: preset.frequency, interval: preset.interval || Number(f.get("interval")) || 1, dates: [] };
     if (preset.key === "monthly_weekday") {
@@ -2086,6 +2090,8 @@ const STYLES = `
   input, select, textarea { font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); background: var(--input-fill-color, var(--secondary-background-color)); color: var(--primary-text-color); width: 100%; }
   input[type=checkbox], input[type=radio] { width: auto; flex-shrink: 0; }
   label.check.option { align-items: flex-start; }
+  label.check.muted { color: var(--secondary-text-color); }
+  label.check small { display: block; font-size: 12px; color: var(--secondary-text-color); }
   label.check.option input { margin-top: 3px; }
   details { margin: 8px 0; }
   summary { cursor: pointer; font-size: 14px; color: var(--primary-color); }

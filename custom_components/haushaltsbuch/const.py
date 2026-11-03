@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -51,6 +51,7 @@ TEMPLATES = [
     {"name": "Strom", "direction": "expense", "category": "Strom", "icon": "mdi:flash", "frequency": "monthly"},
     {"name": "Wasser", "direction": "expense", "category": "Wasser", "icon": "mdi:water", "frequency": "monthly"},
     {"name": "Kredit", "direction": "expense", "category": "Kredite", "icon": "mdi:bank", "frequency": "monthly"},
+    {"name": "Sparen", "direction": "expense", "category": "Sparen", "icon": "mdi:piggy-bank", "frequency": "monthly"},
     {"name": "Bausparvertrag", "direction": "expense", "category": "Sparen", "icon": "mdi:home-plus", "frequency": "monthly"},
     {"name": "Kfz-Versicherung Auto", "direction": "expense", "category": "Versicherungen", "icon": "mdi:car", "frequency": "yearly"},
     {"name": "Kfz-Versicherung Motorrad", "direction": "expense", "category": "Versicherungen", "icon": "mdi:motorbike", "frequency": "yearly"},
