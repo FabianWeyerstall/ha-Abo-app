@@ -21,6 +21,7 @@ from .engine import (
     forecast,
     learned_interval_days,
     month_summaries,
+    salary_periods,
     parse_date,
 )
 from .store import AccessError, ValidationError
@@ -183,8 +184,11 @@ async def ws_forecast(hass, connection, msg, data):
 @websocket_api.async_response
 @_handler
 async def ws_summary(hass, connection, msg, data):
-    items, _, _ = _scope_items(data, connection.user.id, msg["scope"])
-    return (month_summaries(items, date.today(), msg["months"]), False)
+    user_id = connection.user.id
+    items, _, _ = _scope_items(data, user_id, msg["scope"])
+    salary = (data.book.user(user_id).get("settings") or {}).get("salary_item_id")
+    periods = salary_periods(items, salary, date.today(), msg["months"])
+    return (month_summaries(items, date.today(), msg["months"], periods), False)
 
 
 # --------------------------------------------------------------------- write

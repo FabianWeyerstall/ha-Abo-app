@@ -26,7 +26,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 
 - **Timeline** for the next 7, 30 or 90 days with the expected balance for each day
 - **Calendar** month view with every due date
-- **Entries** with name, amount, category, icon and schedule: once, weekly, monthly, quarterly, half-yearly, yearly, every X months, fixed dates per year, or **rolling** (the next date follows the last one, e.g. hairdresser)
+- **Entries** with name, amount, category, icon and schedule: once, weekly, monthly, **monthly on a weekday** (e.g. last Thursday), quarterly, half-yearly, yearly, every X months, fixed dates per year, or **rolling** (the next date follows the last one, e.g. hairdresser)
 - **Certainty level** per booking: *certain*, *likely* or *uncertain*. It is derived from how much amount and date vary and whether recent bookings were confirmed on time. Can also be fixed per entry.
 - **Price changes**: a new amount from a given date; earlier bookings keep the old amount
 - **Contracts**: term, notice period and automatic renewal. The timeline tells you in time by when you have to cancel.
@@ -109,12 +109,14 @@ Tab **Entries** → **+ New entry**.
 2. Enter **Amount** and **First due date** (i.e. the next debit).
 3. Check **Repeats**:
    - *monthly, quarterly, every six months, yearly, every X months*: fixed day of the month
+   - *monthly on a weekday*: e.g. "last Thursday" or "first Monday", for a salary that always comes on a certain weekday
    - *fixed dates each year*: several dates per year, e.g. tyre change in April and October
    - *rolling*: the next date follows the last one, e.g. hairdresser or fuel
    - *once*: e.g. a bonus or an invoice
    - *monthly budget*: for spending without fixed dates, e.g. groceries. No single bookings; the budget is spread evenly over the month.
 4. Optionally **set an end date**, e.g. when a loan ends.
-5. Under **Variation and certainty**: amount variance in %, date tolerance, fixed certainty level and weekend behaviour.
+5. For income such as your salary: tick **"My month starts with this income"** if the salary arrives at the end of the month and pays the next month's debits. Months then run from payday to payday (see [Months](#6-months)).
+6. Under **Variation and certainty**: amount variance in %, date tolerance, fixed certainty level and weekend behaviour.
 
 The **Category** field opens a list of existing categories; typing filters it. To create a new category, just type it.
 
@@ -202,13 +204,15 @@ For the next 12 months, income (green) and expenses (red) are shown as bars. Ful
 
 **Special entries** are highlighted in yellow and listed as labels under the month. At the top you choose what counts as special: by default everything that does not occur every month, or e.g. only quarterly and less frequent, optionally above a minimum amount. The setting applies to months, timeline and calendar.
 
+**Salary month:** If your salary arrives at the end of the month (e.g. on the last Thursday), tick "My month starts with this income" in the salary entry. Each month then runs from payday to payday, and below the month name you see from when it counts. A salary paid after the 15th belongs to the next month, so a salary at the end of October counts for November, together with the debits it pays. The calendar keeps normal calendar months.
+
 Tap a month to expand its bookings. At the bottom, **spending per category**: large is the average per month, small the sum of the next 12 months.
 
 ### 7. Overview
 
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/en/13-overview.png" alt="Overview" width="260">
 
-The dashboard at a glance: balance, expected balance at month end, income and expenses per month, what is left per month and the lowest balance of the next 90 days. Below:
+The dashboard at a glance: balance, expected balance at month end (with a salary month: **before the next payday**, when all debits have gone out), income and expenses per month, what is left per month and the lowest balance of the next 90 days. Below:
 
 - **Where most of the money goes:** a pie chart of expenses by category (the five largest, the rest under "Others").
 - **Fixed costs, special entries and budgets** as shares of an average month.
