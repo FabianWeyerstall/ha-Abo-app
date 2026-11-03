@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/FabianWeyerstall/ha-haushaltsbuch?label=Version)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/releases)
 [![Prüfungen](https://img.shields.io/github/actions/workflow/status/FabianWeyerstall/ha-haushaltsbuch/validate.yml?branch=main&label=Pr%C3%BCfungen)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/actions/workflows/validate.yml)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-18BCF2.svg?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
-[![Lizenz](https://img.shields.io/github/license/FabianWeyerstall/ha-haushaltsbuch?label=Lizenz)](LICENSE)
+[![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg)](LICENSE)
 [![Sprache](https://img.shields.io/badge/Sprache-Deutsch-black.svg)](#)
 
 Zeigt dir in Home Assistant, wann welche Abbuchung oder Einnahme ansteht und wie sicher sie ist: Abos, Verträge, Steuern, Gehalt, Bonus, Photovoltaik oder auch der Räderwechsel zweimal im Jahr. Daraus rechnet es aus, wie viel voraussichtlich an jedem Tag auf deinem Konto ist.
