@@ -92,6 +92,7 @@ class MonthEndBalanceSensor(HouseholdEntity, SensorEntity):
         days = forecast(self.items, end, end, household["balance"], balance_date)
         self._attr_native_value = days[-1].balance_likely if days else None
         self._attr_extra_state_attributes = {
-            "nur_sichere_posten": days[-1].balance_sure if days else None,
+            "nur_sichere_posten": days[-1].balance_sure if days else None,  # kept for existing automations
+            "vorsichtig": days[-1].balance_sure if days else None,
             "stand_vom": balance_date.isoformat(),
         }

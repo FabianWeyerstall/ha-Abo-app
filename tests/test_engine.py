@@ -133,7 +133,8 @@ def test_forecast_balance_lines():
     by_date = {d.day.isoformat(): d for d in days}
     assert by_date["2026-11-02"].balance_sure == 2000
     assert by_date["2026-11-03"].balance_sure == 1000
-    assert by_date["2026-11-04"].balance_sure == 1000
+    # the cautious line counts the likely expense too
+    assert by_date["2026-11-04"].balance_sure == 900
     assert by_date["2026-11-04"].balance_likely == 900
     # uncertain bonus is listed but not counted
     assert [e.item_id for e in by_date["2026-11-05"].entries] == ["bonus"]
@@ -252,7 +253,7 @@ def test_budget_spreads_over_month_and_counts_as_likely():
     assert budget_per_day([budget], date(2026, 11, 10)) == pytest.approx(-20)
     days = forecast([budget], date(2026, 11, 1), date(2026, 11, 30), 1000.0, date(2026, 11, 10))
     assert days[-1].balance_likely == pytest.approx(1000 - 20 * 20)
-    assert days[-1].balance_sure == 1000
+    assert days[-1].balance_sure == pytest.approx(1000 - 20 * 20)
     nov, dec = month_summaries([budget], date(2026, 11, 1), 2)
     assert nov["expense"] == 600 and dec["expense"] == 600
     assert nov["entries"][0]["budget"] is True
@@ -284,3 +285,14 @@ def test_contract_reminders_30_7_1_days_before():
     r = contract_reminders(items, today)[0]
     assert r["days_left"] == 7 and r["cancel_by"] == "2026-11-08" and r["renews"]
     assert [r["name"] for r in contract_reminders(items, today, all_upcoming=True)] == ["in7", "in10", "in30"]
+
+
+def test_cautious_line_leaves_out_likely_income():
+    items = [
+        item(id="salary", direction="income", amount=2000, start_date="2026-11-03"),  # likely
+        item(id="power", amount=100, start_date="2026-11-04"),  # likely
+    ]
+    days = forecast(items, date(2026, 11, 2), date(2026, 11, 5), 500.0, date(2026, 11, 2))
+    assert days[-1].balance_likely == 2400
+    assert days[-1].balance_sure == 400
+    assert all(d.balance_sure <= d.balance_likely for d in days)
