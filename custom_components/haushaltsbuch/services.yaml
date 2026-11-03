@@ -1,0 +1,6 @@
+send_contract_reminders:
+  fields:
+    all:
+      default: false
+      selector:
+        boolean:

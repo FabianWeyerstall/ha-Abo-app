@@ -469,13 +469,25 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         _check_date(raw_contract["end"], "contract_end")
         try:
             notice = int(raw_contract.get("notice") or 0)
-            renew = int(raw_contract.get("renew_months") or 0)
+            renew = int(raw_contract.get("renew", raw_contract.get("renew_months")) or 0)
         except (TypeError, ValueError) as err:
             raise ValidationError("contract") from err
         notice_unit = raw_contract.get("notice_unit") or "months"
-        if not 0 <= notice <= 365 or not 0 <= renew <= 120 or notice_unit not in NOTICE_UNITS:
+        renew_unit = raw_contract.get("renew_unit") or "months"
+        if (
+            not 0 <= notice <= 365
+            or not 0 <= renew <= 365
+            or notice_unit not in NOTICE_UNITS
+            or renew_unit not in NOTICE_UNITS
+        ):
             raise ValidationError("contract")
-        contract = {"end": raw_contract["end"], "notice": notice, "notice_unit": notice_unit, "renew_months": renew}
+        contract = {
+            "end": raw_contract["end"],
+            "notice": notice,
+            "notice_unit": notice_unit,
+            "renew": renew,
+            "renew_unit": renew_unit,
+        }
 
     shift = values.get("weekend_shift") or None
     if shift not in (None, SHIFT_NEXT, SHIFT_PREVIOUS, SHIFT_NONE):

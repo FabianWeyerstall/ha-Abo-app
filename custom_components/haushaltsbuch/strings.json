@@ -12,12 +12,32 @@
   },
   "entity": {
     "calendar": {
-      "due_dates": { "name": "Due dates" }
+      "due_dates": {
+        "name": "Due dates"
+      }
     },
     "sensor": {
-      "next_expense": { "name": "Next expense" },
-      "next_income": { "name": "Next income" },
-      "month_end_balance": { "name": "Balance at month end" }
+      "next_expense": {
+        "name": "Next expense"
+      },
+      "next_income": {
+        "name": "Next income"
+      },
+      "month_end_balance": {
+        "name": "Balance at month end"
+      }
+    }
+  },
+  "services": {
+    "send_contract_reminders": {
+      "name": "Send contract reminders",
+      "description": "Fires the event haushaltsbuch_kuendigungsfrist for every contract whose cancel-by date is 30, 7 or 1 day(s) away. Runs automatically every day at 9:00.",
+      "fields": {
+        "all": {
+          "name": "All upcoming",
+          "description": "Fire for every contract that can be cancelled within the next 60 days, e.g. to test an automation."
+        }
+      }
     }
   }
 }

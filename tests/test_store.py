@@ -186,7 +186,8 @@ def test_new_item_fields_are_validated():
     })
     saved = book.data["items"][item_id]
     assert [c["from"] for c in saved["price_changes"]] == ["2026-12-01", "2027-01-01"]
-    assert saved["contract"] == {"end": "2027-06-30", "notice": 1, "notice_unit": "months", "renew_months": 12}
+    # the old key renew_months is still accepted and stored as renew + unit
+    assert saved["contract"] == {"end": "2027-06-30", "notice": 1, "notice_unit": "months", "renew": 12, "renew_unit": "months"}
     no_contract = book.save_item("anna", {**ITEM, "contract": {"end": "", "notice": 3}})
     assert book.data["items"][no_contract]["contract"] is None
     rolling = book.save_item("anna", {**ITEM, "schedule": {"frequency": "rolling", "learn": False}})
@@ -198,6 +199,7 @@ def test_new_item_fields_are_validated():
         {"price_changes": [{"from": "2026-01-01", "amount": "abc"}]},
         {"contract": {"end": "2026-01-01", "notice_unit": "years"}},
         {"contract": {"end": "2026-01-01", "notice": 400}},
+        {"contract": {"end": "2026-01-01", "renew": 1, "renew_unit": "years"}},
     ):
         with pytest.raises(ValidationError):
             book.save_item("anna", {**ITEM, **bad})

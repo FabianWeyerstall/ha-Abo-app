@@ -1,0 +1,7 @@
+{
+  "services": {
+    "send_contract_reminders": {
+      "service": "mdi:bell-ring"
+    }
+  }
+}

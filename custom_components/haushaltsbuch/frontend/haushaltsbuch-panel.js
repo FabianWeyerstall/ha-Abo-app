@@ -253,6 +253,12 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
+  // Item object when the booking belongs to a special (not monthly) item, else null.
+  _specialOf(e) {
+    const item = this._state.items.find((i) => i.id === e.item_id);
+    return item && !isRegular(item) ? item : null;
+  }
+
   _scopeItems() {
     return this._state.items.filter((i) => (this._isHousehold() ? i.household_id === this._scope : i.owner === this._state.user.id));
   }
@@ -375,7 +381,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             <p class="hint">Diese Buchungen waren in den letzten drei Wochen fällig. Bestätigen hilft der App, die Sicherheit besser einzuschätzen.</p>
             ${this._pending.length > 1 ? `<button class="small" data-action="confirm-all">Alle ${this._pending.length} gebucht</button>` : ""}
           </div>
-          ${this._pending.map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry(e, { confirm: true })}`).join("")}
+          ${this._pending.map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry(e, { confirm: true, special: this._specialOf(e) })}`).join("")}
         </div>`
       : "";
     const list = days.length
@@ -383,7 +389,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           .map(
             (d) => `<div class="day">
               <div class="day-head"><span>${this._dateLabel(d.date)}</span>${d.balance_likely !== null ? `<span class="day-balance ${d.balance_likely < 0 ? "neg" : ""}">${this._money(d.balance_likely)}</span>` : ""}</div>
-              ${d.entries.map((e) => this._renderEntry(e)).join("")}
+              ${d.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("")}
             </div>`
           )
           .join("")
@@ -452,10 +458,30 @@ class HaushaltsbuchPanel extends HTMLElement {
       </div>
       <div class="cal-grid">${WEEKDAYS.map((w) => `<div class="cal-head">${w}</div>`).join("")}${cells.join("")}</div>
     </div>
-    ${selected ? `<div class="card"><h3>${this._dateLabel(this._selectedDay)}</h3>
-      ${selected.entries.length ? selected.entries.map((e) => this._renderEntry(e)).join("") : `<div class="empty">Nichts fällig.</div>`}
+    ${!selected ? this._renderMonthList() : ""}
+    ${selected ? `<div class="card"><div class="row-between"><h3>${this._dateLabel(this._selectedDay)}</h3><button class="secondary small" data-action="select-day" data-day="">ganzer Monat</button></div>
+      ${selected.entries.length ? selected.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("") : `<div class="empty">Nichts fällig.</div>`}
       ${selected.balance_likely !== null ? `<p class="hint">Erwarteter Kontostand am Ende des Tages: ${this._money(selected.balance_likely)} (nur sichere: ${this._money(selected.balance_sure)})</p>` : ""}
     </div>` : ""}`;
+  }
+
+  _renderMonthList() {
+    const days = (this._calendar?.days || []).filter((d) => d.entries.some((e) => e.status !== "skipped"));
+    const t = iso(today());
+    return `<div class="card">
+      <h3>Alle Buchungen im ${MONTHS[this._month.getMonth()]}</h3>
+      <p class="hint">Tippe oben auf einen Tag, um nur diesen Tag zu sehen.</p>
+      ${days.length
+        ? days
+            .map(
+              (d) => `<div class="day ${d.date < t ? "past" : ""}">
+                <div class="day-head"><span>${this._dateLabel(d.date)}</span>${d.balance_likely !== null && d.date >= t ? `<span class="day-balance ${d.balance_likely < 0 ? "neg" : ""}">${this._money(d.balance_likely)}</span>` : ""}</div>
+                ${d.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("")}
+              </div>`
+            )
+            .join("")
+        : `<div class="empty">In diesem Monat ist nichts fällig.</div>`}
+    </div>`;
   }
 
   _renderItems() {
@@ -739,8 +765,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label>Kündigungsfrist<span class="inline-fields"><input name="notice" type="number" min="0" max="365" value="${c.notice ?? 1}" ${dis}><select name="notice_unit" ${dis}>
           ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.notice_unit || "months") === k ? "selected" : ""}>${v}</option>`).join("")}
         </select></span></label>
-        <label>Verlängert sich danach um<span class="inline-fields"><input name="renew_months" type="number" min="0" max="120" value="${c.renew_months ?? 12}" ${dis}><span class="unit">Monate</span></span></label>
-        <p class="hint full">0 Monate heißt: Der Vertrag endet und verlängert sich nicht. ${info ? (info.ended ? `Der Vertrag ist am ${shortDate(info.end)} ausgelaufen.` : `Nächstes Vertragsende ${shortDate(info.end)}, kündigen spätestens am <b>${shortDate(info.cancel_by)}</b>.`) : ""}</p>
+        <label>Verlängert sich danach um<span class="inline-fields"><input name="renew" type="number" min="0" max="365" value="${c.renew ?? c.renew_months ?? 12}" ${dis}><select name="renew_unit" ${dis}>
+          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.renew_unit || "months") === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select></span></label>
+        <p class="hint full">0 heißt: Der Vertrag endet und verlängert sich nicht. ${info ? (info.ended ? `Der Vertrag ist am ${shortDate(info.end)} ausgelaufen.` : `Nächstes Vertragsende ${shortDate(info.end)}, kündigen spätestens am <b>${shortDate(info.cancel_by)}</b>.`) : ""}</p>
       </div>` : ""}
     </details>`;
   }
@@ -898,7 +926,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const amounts = f.getAll("pc_amount");
     const price_changes = froms.map((from, i) => ({ from, amount: amounts[i] }));
     const contract = f.get("has_contract")
-      ? { end: f.get("contract_end") || "", notice: Number(f.get("notice") || 0), notice_unit: f.get("notice_unit") || "months", renew_months: Number(f.get("renew_months") || 0) }
+      ? { end: f.get("contract_end") || "", notice: Number(f.get("notice") || 0), notice_unit: f.get("notice_unit") || "months", renew: Number(f.get("renew") || 0), renew_unit: f.get("renew_unit") || "months" }
       : null;
     if (preset.key === "fixed_dates") {
       schedule.dates = String(f.get("dates") || "")
@@ -1190,6 +1218,7 @@ const STYLES = `
   .chip.booked { --chip: var(--success-color, #43a047); }
   .chip.skipped { --chip: var(--secondary-text-color); }
   .chip.shared { --chip: var(--primary-color); }
+  .day.past { opacity: 0.6; }
   .chip.budget { --chip: var(--info-color, #039be5); }
   .chip.contract { --chip: var(--primary-color); }
   .chip.contract.urgent { --chip: var(--error-color, #db4437); }
