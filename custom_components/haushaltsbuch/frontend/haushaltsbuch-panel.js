@@ -826,13 +826,13 @@ class HaushaltsbuchPanel extends HTMLElement {
     const max = list[0][1].sum;
     return `<div class="card">
       <h3>Ausgaben nach Kategorie</h3>
-      <p class="hint">Summe der nächsten ${rows.length} Monate (sichere und wahrscheinliche Ausgaben, inklusive Budgets): <b>${this._money(total)}</b>, im Schnitt ${this._money(total / rows.length)} pro Monat.</p>
+      <p class="hint">Durchschnitt pro Monat über die nächsten ${rows.length} Monate (sichere und wahrscheinliche Ausgaben, inklusive Budgets): <b>${this._money(total / rows.length)}</b> pro Monat, zusammen ${this._money(total)}. Klein darunter steht die Summe der ${rows.length} Monate.</p>
       ${list
         .map(
           ([cat, t]) => `<div class="cat-row">
             <div class="cat-name">${esc(cat)}<small>${esc([...t.items].slice(0, 4).join(", "))}${t.items.size > 4 ? " …" : ""}</small></div>
             <div class="cat-bar"><span style="width:${(t.sum / max) * 100}%"></span></div>
-            <div class="cat-sum">${this._money(t.sum)}<small>${Math.round((t.sum / total) * 100)} %</small></div>
+            <div class="cat-sum">${this._money(t.sum / rows.length)}<small>${this._money(t.sum)} · ${Math.round((t.sum / total) * 100)} %</small></div>
           </div>`
         )
         .join("")}
