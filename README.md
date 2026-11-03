@@ -34,6 +34,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Termin festlegen**: Datum und Betrag einer einzelnen Buchung festlegen. Bei gleitenden Posten rücken alle weiteren Termine nach, sonst wird nur diese eine Buchung verschoben.
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
+- **Gehaltsmonat**: Kommt das Gehalt am Monatsende (z.B. am letzten Donnerstag), laufen Monate und Auswertungen von Gehalt zu Gehalt, und die Übersicht zeigt den Stand **vor dem nächsten Gehalt**
 - **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat und in Zeitleiste und Kalender gelb markiert. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
 - **Übersicht** als Dashboard mit Kennzahlen und Kreisdiagramm nach Kategorie
 - **Suche** in den Posten und **alle offenen Buchungen auf einmal bestätigen**
@@ -112,7 +113,7 @@ Tab **Posten** → **+ Neuer Posten**.
    - *einmalig*: z.B. Bonus oder eine Rechnung
    - *Budget pro Monat*: für Ausgaben ohne feste Termine, z.B. Lebensmittel. Keine einzelnen Buchungen, das Budget wird gleichmäßig über den Monat verteilt.
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
-5. Bei einer Einnahme wie dem Gehalt: Häkchen **„Mein Monat beginnt mit dieser Einnahme“**, wenn das Gehalt am Monatsende kommt und die Abbuchungen des Folgemonats bezahlt. Dann laufen Monatsübersicht und Übersicht von Gehalt zu Gehalt (siehe [Monate](#6-monate)).
+5. Bei einer Einnahme wie dem Gehalt: Häkchen **„Mein Monat beginnt mit dieser Einnahme“**, wenn das Gehalt am Monatsende kommt und die Abbuchungen des Folgemonats bezahlt. Dann laufen Monatsübersicht und Übersicht von Gehalt zu Gehalt (siehe [Gehalt am Monatsende](#gehalt-am-monatsende-gehaltsmonat)).
 6. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
 
 Bei der **Kategorie** öffnet sich beim Antippen eine Liste der vorhandenen Kategorien, Tippen filtert sie. Eine neue Kategorie gibst du einfach ein.
@@ -147,6 +148,26 @@ Das Haushaltsbuch prüft jeden Morgen um 9 Uhr alle Verträge. Muss einer in **3
 3. Testen: **Entwicklerwerkzeuge → Aktionen → „Haushaltsbuch: Kündigungsfristen melden“** mit **Alle kommenden** ausführen. Dann kommt sofort für jeden Vertrag, der in den nächsten 60 Tagen kündbar ist, eine Nachricht.
 
 Das Ereignis enthält `name`, `cancel_by`, `contract_end`, `days_left`, `renews`, `amount`, `owner_name` und `household`, falls du lieber eine eigene Automation baust. Es kommt auch für private Posten, sichtbar ist es aber nur für Admins in den Automationen.
+
+### Gehalt am Monatsende (Gehaltsmonat)
+
+Viele bekommen ihr Gehalt nicht am 1., sondern am Monatsende, z.B. **immer am letzten Donnerstag**. Die Abbuchungen danach (Miete, Strom, Versicherungen) bezahlt dieses Gehalt. Rechnet die App in Kalendermonaten, sieht es am Monatsende so aus, als wäre viel Geld übrig, obwohl es für den nächsten Monat gedacht ist. So stellst du das um:
+
+1. Gehalts-Posten öffnen (oder neu anlegen, z.B. mit der Vorlage **Gehalt**).
+2. **Turnus:** *monatlich am Wochentag*, dann **Welcher Tag?** → *letzter* und *Donnerstag*. Es gehen auch *erster* bis *vierter* und jeder andere Wochentag.
+3. **Gültig ab:** ungefähr ab wann das gilt. Die Termine berechnet die App selbst.
+4. Häkchen **„Mein Monat beginnt mit dieser Einnahme (Gehalt)“** setzen und speichern.
+
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/14-gehalt.png" alt="Gehalt am letzten Donnerstag mit Gehaltsmonat" width="260">
+
+Was sich dadurch ändert:
+
+- **Monate:** Jeder Monat läuft von Gehalt zu Gehalt. Unter dem Monatsnamen steht, ab wann er zählt, z.B. „Nov 26, ab 29.10.“. Ein Gehalt nach dem 15. gehört zum Folgemonat, ein Gehalt Ende Oktober also zum November, zusammen mit den Abbuchungen, die es bezahlt.
+- **Übersicht:** Statt „Erwartet zum Monatsende“ steht dort **„Vor dem nächsten Gehalt“**: was am Tag vor dem nächsten Gehalt übrig ist, wenn alle Abbuchungen des Monats schon runter sind. Das ist die ehrliche Zahl dafür, wie viel wirklich übrig bleibt.
+- Auch die Auswertungen der Übersicht (Kategorien, Sicherheit, Sonderposten) rechnen in diesen Gehaltsmonaten.
+- **Zeitleiste und Kalender** bleiben, wie sie sind. Der Kalender zeigt weiter normale Kalendermonate.
+
+Das Häkchen kann immer nur eine Einnahme haben und gilt für dich persönlich. Nimmst du es wieder raus, rechnet die App wieder in Kalendermonaten.
 
 ### 3. Die Zeitleiste lesen
 
@@ -214,7 +235,7 @@ Für die nächsten 12 Monate stehen hier Einnahmen (grün) und Ausgaben (rot) al
 
 **Sonderposten** sind gelb markiert und stehen als Etiketten unter dem Monat. Oben stellst du ein, was als Sonderposten zählt: standardmäßig alles, was nicht jeden Monat kommt. Du kannst aber auch z.B. „erst ab vierteljährlich“ wählen und einen Mindestbetrag setzen. Die Einstellung gilt für Monate, Zeitleiste und Kalender.
 
-**Gehaltsmonat:** Kommt dein Gehalt am Monatsende (z.B. am letzten Donnerstag), setze im Gehalts-Posten das Häkchen „Mein Monat beginnt mit dieser Einnahme“. Dann läuft jeder Monat von Gehalt zu Gehalt, und unter dem Monatsnamen steht, ab wann er zählt. Ein Gehalt nach dem 15. gehört zum Folgemonat, ein Gehalt Ende Oktober also zum November, zusammen mit den Abbuchungen, die es bezahlt. Der Kalender bleibt beim normalen Kalendermonat.
+**Gehaltsmonat:** Hast du beim Gehalt „Mein Monat beginnt mit dieser Einnahme“ gesetzt, läuft jeder Monat von Gehalt zu Gehalt, und unter dem Monatsnamen steht, ab wann er zählt (siehe [Gehalt am Monatsende](#gehalt-am-monatsende-gehaltsmonat)).
 
 Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welche **Kategorien** am meisten kosten: groß der Durchschnitt pro Monat, klein darunter die Summe der nächsten 12 Monate. Ein Budget von 500 € pro Monat steht dort also als 500 € und klein als rund 6.000 €.
 
