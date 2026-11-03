@@ -238,6 +238,12 @@ def test_contract_cancel_by_and_renewal():
     info = contract_info(fixed, date(2026, 11, 2))
     assert info["ended"] and info["cancel_by"] == "2026-10-03"
     assert contract_info(item(), date(2026, 1, 1)) is None
+    # renewal in weeks (e.g. a 4-week mobile plan) and days
+    weekly = item(contract={"end": "2026-11-01", "notice": 7, "notice_unit": "days", "renew": 4, "renew_unit": "weeks"})
+    info = contract_info(weekly, date(2026, 11, 3))
+    assert info["end"] == "2026-11-29" and info["cancel_by"] == "2026-11-22"
+    daily = item(contract={"end": "2026-11-01", "notice": 0, "notice_unit": "days", "renew": 30, "renew_unit": "days"})
+    assert contract_info(daily, date(2026, 11, 3))["end"] == "2026-12-01"
 
 
 def test_budget_spreads_over_month_and_counts_as_likely():

@@ -17,7 +17,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Termin festlegen**: Datum und Betrag einer einzelnen Buchung festlegen. Bei gleitenden Posten rücken alle weiteren Termine nach, sonst wird nur diese eine Buchung verschoben.
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
-- **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat hervorgehoben. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
+- **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat und in Zeitleiste und Kalender gelb markiert. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
 - **Suche** in den Posten und **alle offenen Buchungen auf einmal bestätigen**
 - **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Prime, Disney+, Gehalt, Tanken, Räderwechsel …)
 - **Export und Import** der eigenen Posten als JSON-Datei, z.B. als Sicherung oder zum Umzug auf eine andere HA-Instanz. Beim Import wählbar: hinzufügen (Doppelte werden übersprungen) oder ersetzen
@@ -59,7 +59,7 @@ Posten öffnen → **Preisänderungen** → **+ Preisänderung**, Datum und neue
 
 ### Vertrag und Kündigungsfrist
 
-Posten öffnen → **Vertrag und Kündigung** → Häkchen **Vertragslaufzeit erfassen**. Eintragen, bis wann der Vertrag läuft, die Kündigungsfrist und um wie viele Monate er sich danach verlängert (0 = endet einfach). Die App rechnet das nächste Vertragsende selbst weiter. Muss in den nächsten 60 Tagen gekündigt werden, erscheint der Vertrag in der Zeitleiste unter **Kündigungsfristen**, in der Postenliste steht „kündbar bis …“.
+Posten öffnen → **Vertrag und Kündigung** → Häkchen **Vertragslaufzeit erfassen**. Eintragen, bis wann der Vertrag läuft, die Kündigungsfrist und um wie lange er sich danach verlängert, in Tagen, Wochen oder Monaten (0 = endet einfach). Die App rechnet das nächste Vertragsende selbst weiter. Muss in den nächsten 60 Tagen gekündigt werden, erscheint der Vertrag in der Zeitleiste unter **Kündigungsfristen**, in der Postenliste steht „kündbar bis …“.
 
 ### 3. Buchungen bestätigen
 
@@ -84,7 +84,7 @@ Wer das Tanken nicht einzeln pflegen will, legt stattdessen ein **Budget pro Mon
 ### 5. Ansichten
 
 - **Zeitleiste**: alle Buchungen der nächsten 7, 30 oder 90 Tage mit erwartetem Kontostand. Zwei Linien: nur sichere Buchungen sowie sichere und wahrscheinliche zusammen.
-- **Kalender**: Monatsansicht, ein Tag antippen zeigt seine Buchungen.
+- **Kalender**: Monatsansicht, darunter alle Buchungen des Monats. Ein Tag antippen zeigt nur diesen Tag.
 - **Posten**: alle Posten nach Kategorie, mit Summen pro Monat und Jahr (umgerechnet) und einer Suche.
 - **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind alles, was nicht jeden Monat kommt. Einen Monat antippen zeigt die einzelnen Buchungen. Darunter siehst du, welche Kategorien in den nächsten 12 Monaten am meisten kosten.
 

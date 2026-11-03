@@ -125,19 +125,25 @@ def amount_on(item: dict[str, Any], day: date) -> float:
     return amount
 
 
-def _sub_notice(day: date, value: int, unit: str) -> date:
+def _shift_by(day: date, value: int, unit: str, original_day: int | None = None) -> date:
+    """Move `day` by `value` days, weeks or months (negative goes back)."""
     if unit == "months":
-        return _add_months(day, -value, day.day)
+        return _add_months(day, value, original_day or day.day)
     if unit == "weeks":
-        return day - timedelta(weeks=value)
-    return day - timedelta(days=value)
+        return day + timedelta(weeks=value)
+    return day + timedelta(days=value)
+
+
+def _sub_notice(day: date, value: int, unit: str) -> date:
+    return _shift_by(day, -value, unit)
 
 
 def contract_info(item: dict[str, Any], today: date) -> dict[str, Any] | None:
     """Next contract end and the last day to cancel for it.
 
-    A contract renews by `renew_months` after each end; without renewal it
-    simply ends. Returns None when the item has no contract end date.
+    A contract renews by `renew` (in `renew_unit`, months by default; the
+    older key `renew_months` is still read) after each end; without renewal
+    it simply ends. Returns None when the item has no contract end date.
     """
     contract = item.get("contract") or {}
     end = parse_date(contract.get("end"))
@@ -145,14 +151,15 @@ def contract_info(item: dict[str, Any], today: date) -> dict[str, Any] | None:
         return None
     notice = int(contract.get("notice") or 0)
     unit = contract.get("notice_unit") or "months"
-    renew = int(contract.get("renew_months") or 0)
+    renew = int(contract.get("renew", contract.get("renew_months")) or 0)
+    renew_unit = contract.get("renew_unit") or "months"
+    first_end = end
     cancel_by = _sub_notice(end, notice, unit)
     if renew > 0:
-        original_day = end.day
         k = 0
         while cancel_by < today:
             k += 1
-            end = _add_months(parse_date(contract["end"]), k * renew, original_day)
+            end = _shift_by(first_end, k * renew, renew_unit, first_end.day)
             cancel_by = _sub_notice(end, notice, unit)
     return {
         "end": end.isoformat(),
