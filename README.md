@@ -211,7 +211,7 @@ Für die nächsten 12 Monate stehen hier Einnahmen (grün) und Ausgaben (rot) al
 
 **Sonderposten** sind gelb markiert und stehen als Etiketten unter dem Monat. Oben stellst du ein, was als Sonderposten zählt: standardmäßig alles, was nicht jeden Monat kommt. Du kannst aber auch z.B. „erst ab vierteljährlich“ wählen und einen Mindestbetrag setzen. Die Einstellung gilt für Monate, Zeitleiste und Kalender.
 
-Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welche **Kategorien** in den nächsten 12 Monaten am meisten kosten.
+Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welche **Kategorien** am meisten kosten: groß der Durchschnitt pro Monat, klein darunter die Summe der nächsten 12 Monate. Ein Budget von 500 € pro Monat steht dort also als 500 € und klein als rund 6.000 €.
 
 ## Gemeinsames Haushaltsbuch
 
