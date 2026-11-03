@@ -203,3 +203,13 @@ def test_new_item_fields_are_validated():
     ):
         with pytest.raises(ValidationError):
             book.save_item("anna", {**ITEM, **bad})
+
+
+def test_user_settings_for_special_items():
+    book = Book()
+    book.set_user_settings("anna", {"special_min_months": 3, "special_min_amount": "50"})
+    assert book.user("anna")["settings"] == {"special_min_months": 3, "special_min_amount": 50.0}
+    with pytest.raises(ValidationError):
+        book.set_user_settings("anna", {"special_min_months": 5})
+    with pytest.raises(ValidationError):
+        book.set_user_settings("anna", {"special_min_amount": "viel"})

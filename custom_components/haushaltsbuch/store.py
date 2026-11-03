@@ -50,6 +50,9 @@ def empty_data() -> dict[str, Any]:
     return {"users": {}, "items": {}, "households": {}}
 
 
+# Items booked at most every N months count as "special" in the views.
+SPECIAL_MIN_MONTHS = (2, 3, 6, 12, 999)
+
 EXPORT_FORMAT = "haushaltsbuch"
 EXPORT_VERSION = 1
 
@@ -86,6 +89,20 @@ class Book:
         return self.data["users"].setdefault(
             user_id, {"balance": None, "balance_date": None}
         )
+
+    def set_user_settings(self, user_id: str, settings: dict[str, Any]) -> None:
+        """Personal display settings (currently: what counts as a special item)."""
+        try:
+            min_months = int(settings.get("special_min_months", 2))
+            min_amount = round(abs(float(settings.get("special_min_amount") or 0)), 2)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("settings") from err
+        if min_months not in SPECIAL_MIN_MONTHS:
+            raise ValidationError("special_min_months")
+        self.user(user_id)["settings"] = {
+            "special_min_months": min_months,
+            "special_min_amount": min_amount,
+        }
 
     def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:
         _check_date(balance_date, "balance_date")

@@ -96,7 +96,7 @@ Wer das Tanken nicht einzeln pflegen will, legt stattdessen ein **Budget pro Mon
 - **Zeitleiste**: alle Buchungen der nächsten 7, 30 oder 90 Tage mit erwartetem Kontostand. Zwei Linien: nur sichere Buchungen sowie sichere und wahrscheinliche zusammen.
 - **Kalender**: Monatsansicht, darunter alle Buchungen des Monats. Ein Tag antippen zeigt nur diesen Tag.
 - **Posten**: alle Posten nach Kategorie, mit Summen pro Monat und Jahr (umgerechnet) und einer Suche.
-- **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind alles, was nicht jeden Monat kommt. Einen Monat antippen zeigt die einzelnen Buchungen. Darunter siehst du, welche Kategorien in den nächsten 12 Monaten am meisten kosten.
+- **Monate**: was in welchem Monat wirklich gebucht wird. Gelb markierte **Sonderposten** sind standardmäßig alles, was nicht jeden Monat kommt. Oben in der Monatsübersicht stellst du ein, ab welchem Turnus (z.B. erst ab vierteljährlich) und ab welchem Betrag ein Posten als Sonderposten gilt. Einen Monat antippen zeigt die einzelnen Buchungen. Darunter siehst du, welche Kategorien in den nächsten 12 Monaten am meisten kosten.
 
 ### 6. Gemeinsames Haushaltsbuch
 
