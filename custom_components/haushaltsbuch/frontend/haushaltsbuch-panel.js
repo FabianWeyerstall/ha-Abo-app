@@ -73,35 +73,45 @@ function searchIcons(list, query, limit = 40) {
     .map(([name]) => `mdi:${name}`);
 }
 
+// Language of the panel: German for German HA users, English for everyone else.
+let LANG = "de";
+const tr = (de, en) => (LANG === "de" ? de : en);
+const setLanguage = (language) => {
+  LANG = String(language || "de").toLowerCase().startsWith("de") ? "de" : "en";
+};
+let DATE_LOCALE = "de-DE";
+const fmtDate = (isoDate, opts) => parseIso(isoDate).toLocaleDateString(DATE_LOCALE, opts);
+const monthName = (index, style = "long") => new Date(2020, index, 1).toLocaleDateString(LANG === "de" ? "de-DE" : DATE_LOCALE, { month: style }).replace(/\.$/, "");
+const weekdayName = (index) => new Date(2024, 0, 1 + index).toLocaleDateString(LANG === "de" ? "de-DE" : DATE_LOCALE, { weekday: "short" }).replace(/\.$/, "");
+
 const SUGGEST_FIELDS = new Set(["icon", "category"]);
 const INCOGNITO_KEY = "haushaltsbuch-incognito";
 
 const CERTAINTY = {
-  sicher: { label: "sicher", color: "var(--success-color, #43a047)" },
-  wahrscheinlich: { label: "wahrscheinlich", color: "var(--warning-color, #ffa000)" },
-  unsicher: { label: "unsicher", color: "var(--secondary-text-color, #888)" },
+  sicher: { de: "sicher", en: "certain", color: "var(--success-color, #43a047)" },
+  wahrscheinlich: { de: "wahrscheinlich", en: "likely", color: "var(--warning-color, #ffa000)" },
+  unsicher: { de: "unsicher", en: "uncertain", color: "var(--secondary-text-color, #888)" },
 };
+const certaintyLabel = (key) => (CERTAINTY[key] || CERTAINTY.unsicher)[LANG];
 
 const FREQUENCY_PRESETS = [
-  { key: "once", label: "einmalig", frequency: "once", interval: 1 },
-  { key: "weekly", label: "wöchentlich", frequency: "weekly", interval: 1 },
-  { key: "monthly", label: "monatlich", frequency: "monthly", interval: 1 },
-  { key: "quarterly", label: "vierteljährlich", frequency: "monthly", interval: 3 },
-  { key: "halfyearly", label: "halbjährlich", frequency: "monthly", interval: 6 },
-  { key: "yearly", label: "jährlich", frequency: "yearly", interval: 1 },
-  { key: "every_n_months", label: "alle X Monate", frequency: "monthly", interval: null },
-  { key: "fixed_dates", label: "feste Termine im Jahr", frequency: "fixed_dates", interval: 1 },
-  { key: "rolling", label: "gleitend (ab letztem Termin)", frequency: "rolling", interval: null },
-  { key: "budget", label: "Budget pro Monat (variable Ausgaben)", frequency: "budget", interval: 1 },
+  { key: "once", de: "einmalig", en: "once", frequency: "once", interval: 1 },
+  { key: "weekly", de: "wöchentlich", en: "weekly", frequency: "weekly", interval: 1 },
+  { key: "monthly", de: "monatlich", en: "monthly", frequency: "monthly", interval: 1 },
+  { key: "quarterly", de: "vierteljährlich", en: "quarterly", frequency: "monthly", interval: 3 },
+  { key: "halfyearly", de: "halbjährlich", en: "every six months", frequency: "monthly", interval: 6 },
+  { key: "yearly", de: "jährlich", en: "yearly", frequency: "yearly", interval: 1 },
+  { key: "every_n_months", de: "alle X Monate", en: "every X months", frequency: "monthly", interval: null },
+  { key: "fixed_dates", de: "feste Termine im Jahr", en: "fixed dates each year", frequency: "fixed_dates", interval: 1 },
+  { key: "rolling", de: "gleitend (ab letztem Termin)", en: "rolling (from the last date)", frequency: "rolling", interval: null },
+  { key: "budget", de: "Budget pro Monat (variable Ausgaben)", en: "monthly budget (variable spending)", frequency: "budget", interval: 1 },
 ];
 
-const NOTICE_UNITS = { days: "Tage", weeks: "Wochen", months: "Monate" };
-const shortDate = (isoDate) => parseIso(isoDate).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+const NOTICE_UNITS = { days: ["Tage", "days"], weeks: ["Wochen", "weeks"], months: ["Monate", "months"] };
+const shortDate = (isoDate) => fmtDate(isoDate, { day: "2-digit", month: "2-digit", year: "2-digit" });
 
-const unitLabel = (n, unit) => (unit === "weeks" ? (n === 1 ? "Woche" : "Wochen") : n === 1 ? "Monat" : "Monate");
-
-const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+const unitLabel = (n, unit) =>
+  unit === "weeks" ? (n === 1 ? tr("Woche", "week") : tr("Wochen", "weeks")) : n === 1 ? tr("Monat", "month") : tr("Monate", "months");
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -176,26 +186,26 @@ function intervalMonths(item) {
 }
 
 const SPECIAL_OPTIONS = [
-  [2, "alles, was nicht jeden Monat kommt"],
-  [3, "ab vierteljährlich"],
-  [6, "ab halbjährlich"],
-  [12, "nur jährlich und einmalig"],
-  [999, "nur einmalige Posten"],
+  [2, "alles, was nicht jeden Monat kommt", "everything not due every month"],
+  [3, "ab vierteljährlich", "quarterly or less often"],
+  [6, "ab halbjährlich", "every six months or less often"],
+  [12, "nur jährlich und einmalig", "only yearly and one-off"],
+  [999, "nur einmalige Posten", "only one-off entries"],
 ];
 
 function scheduleLabel(item) {
   const s = item.schedule || {};
   const preset = presetOf(s);
-  if (preset === "every_n_months") return `alle ${s.interval} Monate`;
+  if (preset === "every_n_months") return tr(`alle ${s.interval} Monate`, `every ${s.interval} months`);
   if (preset === "rolling") {
-    if (item.learned_days) return `gleitend, gelernt alle ~${item.learned_days} Tage`;
-    return `gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`;
+    if (item.learned_days) return tr(`gleitend, gelernt alle ~${item.learned_days} Tage`, `rolling, learned every ~${item.learned_days} days`);
+    return tr(`gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`, `rolling, every ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`);
   }
-  if (preset === "budget") return "Budget pro Monat";
-  if (preset === "weekly" && s.interval > 1) return `alle ${s.interval} Wochen`;
-  if (preset === "yearly" && s.interval > 1) return `alle ${s.interval} Jahre`;
-  if (preset === "fixed_dates") return (s.dates || []).map((md) => md.split("-").reverse().join(".") + ".").join(" & ");
-  return FREQUENCY_PRESETS.find((p) => p.key === preset).label;
+  if (preset === "budget") return tr("Budget pro Monat", "monthly budget");
+  if (preset === "weekly" && s.interval > 1) return tr(`alle ${s.interval} Wochen`, `every ${s.interval} weeks`);
+  if (preset === "yearly" && s.interval > 1) return tr(`alle ${s.interval} Jahre`, `every ${s.interval} years`);
+  if (preset === "fixed_dates") return (s.dates || []).map((md) => fmtDate(`2020-${md}`, { day: "2-digit", month: "2-digit" })).join(" & ");
+  return FREQUENCY_PRESETS.find((p) => p.key === preset)[LANG];
 }
 
 function monthlyEquivalent(item) {
@@ -292,6 +302,9 @@ class HaushaltsbuchPanel extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    const language = hass?.locale?.language || hass?.language || "de";
+    setLanguage(language);
+    DATE_LOCALE = LANG === "de" ? "de-DE" : language;
     if (first) this._reload();
     else this._updateMenuButton();
   }
@@ -322,7 +335,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       await this._loadView();
       this._error = null;
     } catch (err) {
-      this._error = err.message || String(err);
+      this._error = this._errorText(err);
     }
     this._loaded = true;
     this._render();
@@ -353,9 +366,18 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._dialog = null;
       await this._reload();
     } catch (err) {
-      this._error = err.message || String(err);
+      this._error = this._errorText(err);
       this._render();
     }
+  }
+
+  /** Readable error text in the panel language. */
+  _errorText(err) {
+    const detail = err?.message || String(err);
+    if (err?.code === "unauthorized") return tr(`Kein Zugriff: ${detail}`, `Access denied: ${detail}`);
+    if (err?.code === "invalid_format") return tr(`Ungültiger Wert: ${detail}`, `Invalid value: ${detail}`);
+    if (err?.code === "not_loaded") return tr("Haushaltsbuch ist nicht geladen.", "Household Budget is not loaded.");
+    return detail;
   }
 
   // -------------------------------------------------------------- formatting
@@ -404,7 +426,7 @@ class HaushaltsbuchPanel extends HTMLElement {
   /** Attributes for a text field that takes an amount. */
   _amountAttrs(allowNegative = false) {
     const example = `12${this._decimalSeparator()}99`;
-    return `type="text" inputmode="decimal" autocomplete="off" data-amount pattern="${allowNegative ? "-?" : ""}[0-9][0-9., ]*" title="Betrag, z.B. ${example}" placeholder="0${this._decimalSeparator()}00"`;
+    return `type="text" inputmode="decimal" autocomplete="off" data-amount pattern="${allowNegative ? "-?" : ""}[0-9][0-9., ]*" title="${tr("Betrag, z.B.", "Amount, e.g.")} ${example}" placeholder="0${this._decimalSeparator()}00"`;
   }
 
   _money(value, signed = false) {
@@ -417,9 +439,10 @@ class HaushaltsbuchPanel extends HTMLElement {
   _dateLabel(isoDate) {
     const d = parseIso(isoDate);
     const diff = Math.round((d - today()) / 86400000);
-    const base = `${WEEKDAYS[(d.getDay() + 6) % 7]}, ${d.getDate()}. ${MONTHS[d.getMonth()]}`;
-    if (diff === 0) return `Heute · ${base}`;
-    if (diff === 1) return `Morgen · ${base}`;
+    const wd = weekdayName((d.getDay() + 6) % 7);
+    const base = LANG === "de" ? `${wd}, ${d.getDate()}. ${monthName(d.getMonth())}` : `${wd}, ${monthName(d.getMonth())} ${d.getDate()}`;
+    if (diff === 0) return `${tr("Heute", "Today")} · ${base}`;
+    if (diff === 1) return `${tr("Morgen", "Tomorrow")} · ${base}`;
     return base;
   }
 
@@ -431,7 +454,11 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _chip(certainty) {
     const c = CERTAINTY[certainty] || CERTAINTY.unsicher;
-    return `<span class="chip" style="--chip:${c.color}">${c.label}</span>`;
+    return `<span class="chip" style="--chip:${c.color}">${c[LANG]}</span>`;
+  }
+
+  _templates() {
+    return (LANG === "de" ? this._state.templates : this._state.templates_en) || this._state.templates || [];
   }
 
   _isHousehold() {
@@ -487,14 +514,14 @@ class HaushaltsbuchPanel extends HTMLElement {
       <style>${STYLES}</style>
       <div class="toolbar">
         <ha-menu-button></ha-menu-button>
-        <div class="title">Haushaltsbuch</div>
-        ${s ? `<button class="incognito-toggle ${this._incognito ? "on" : ""}" data-action="incognito" title="${this._incognito ? "Beträge wieder zeigen" : "Inkognito: Beträge verbergen"}" aria-pressed="${this._incognito}">${this._icon(this._incognito ? "mdi:eye-off" : "mdi:eye", 22)}</button>` : ""}
+        <div class="title">${tr("Haushaltsbuch", `<span class="title-long">Household Budget</span><span class="title-short">Budget</span>`)}</div>
+        ${s ? `<button class="incognito-toggle ${this._incognito ? "on" : ""}" data-action="incognito" title="${this._incognito ? tr("Beträge wieder zeigen", "Show amounts again") : tr("Inkognito: Beträge verbergen", "Incognito: hide amounts")}" aria-pressed="${this._incognito}">${this._icon(this._incognito ? "mdi:eye-off" : "mdi:eye", 22)}</button>` : ""}
         ${s ? this._renderScopeSelect() : ""}
       </div>
       ${s ? this._renderTabs() : ""}
       <div class="content">
         ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
-        ${!this._loaded ? `<div class="empty">Lade …</div>` : s ? this._renderView() : ""}
+        ${!this._loaded ? `<div class="empty">${tr("Lade …", "Loading …")}</div>` : s ? this._renderView() : ""}
       </div>
       ${this._dialog ? this._renderDialog() : ""}
     `;
@@ -511,19 +538,19 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _renderScopeSelect() {
-    const options = [{ id: "me", name: "Meine Posten" }, ...this._state.households.map((h) => ({ id: h.id, name: `Haushalt: ${h.name}` }))];
-    return `<select class="scope" data-change="scope" aria-label="Ansicht">
+    const options = [{ id: "me", name: tr("Meine Posten", "My entries") }, ...this._state.households.map((h) => ({ id: h.id, name: `${tr("Haushalt", "Household")}: ${h.name}` }))];
+    return `<select class="scope" data-change="scope" aria-label="${tr("Ansicht", "View")}">
       ${options.map((o) => `<option value="${esc(o.id)}" ${o.id === this._scope ? "selected" : ""}>${esc(o.name)}</option>`).join("")}
     </select>`;
   }
 
   _renderTabs() {
     const tabs = [
-      ["timeline", "Zeitleiste", "mdi:timeline-clock-outline"],
-      ["calendar", "Kalender", "mdi:calendar-month"],
-      ["items", "Posten", "mdi:format-list-bulleted"],
-      ["months", "Monate", "mdi:chart-bar"],
-      ["households", "Haushalt", "mdi:home-account"],
+      ["timeline", tr("Zeitleiste", "Timeline"), "mdi:timeline-clock-outline"],
+      ["calendar", tr("Kalender", "Calendar"), "mdi:calendar-month"],
+      ["items", tr("Posten", "Entries"), "mdi:format-list-bulleted"],
+      ["months", tr("Monate", "Months"), "mdi:chart-bar"],
+      ["households", tr("Haushalt", "Household"), "mdi:home-account"],
     ];
     return `<nav class="tabs">${tabs
       .map(([key, label, icon]) => `<button class="tab ${this._view === key ? "active" : ""}" data-action="view" data-view="${key}">${this._icon(icon, 20)}<span>${label}</span></button>`)
@@ -552,22 +579,22 @@ class HaushaltsbuchPanel extends HTMLElement {
     const known = b.balance !== null && b.balance !== undefined;
     return `<div class="card balance">
       <div>
-        <div class="label">${this._isHousehold() ? "Haushaltskonto" : "Mein Kontostand"}</div>
+        <div class="label">${this._isHousehold() ? tr("Haushaltskonto", "Household account") : tr("Mein Kontostand", "My balance")}</div>
         <div class="big">${known ? this._money(b.balance) : "—"}</div>
-        <div class="sub">${known ? `Stand ${parseIso(b.balance_date).toLocaleDateString("de-DE")}` : "Noch kein Kontostand hinterlegt"}</div>
+        <div class="sub">${known ? `${tr("Stand", "As of")} ${fmtDate(b.balance_date)}` : tr("Noch kein Kontostand hinterlegt", "No balance entered yet")}</div>
       </div>
       ${known && last && last.balance_likely !== null ? `<div>
-        <div class="label">Am ${parseIso(last.date).toLocaleDateString("de-DE")}</div>
+        <div class="label">${tr("Am", "On")} ${fmtDate(last.date)}</div>
         <div class="big ${last.balance_likely < 0 ? "neg" : ""}">${this._money(last.balance_likely)}</div>
-        <div class="sub">nur sichere Posten: ${this._money(last.balance_sure)}</div>
+        <div class="sub">${tr("nur sichere Posten", "certain entries only")}: ${this._money(last.balance_sure)}</div>
       </div>` : ""}
-      <button class="secondary" data-action="edit-balance">Kontostand setzen</button>
+      <button class="secondary" data-action="edit-balance">${tr("Kontostand setzen", "Set balance")}</button>
     </div>`;
   }
 
   _renderEntry(e, { showBalance = false, confirm = false, special = null } = {}) {
     const owner = this._isHousehold() ? `<span class="owner">${esc(e.owner_name)}</span>` : "";
-    const status = e.budget ? `<span class="chip budget">Budget</span>` : e.status === "booked" ? `<span class="chip booked">gebucht</span>` : e.status === "skipped" ? `<span class="chip skipped">ausgefallen</span>` : e.planned ? `<span class="chip planned">Termin</span>` : this._chip(e.certainty);
+    const status = e.budget ? `<span class="chip budget">Budget</span>` : e.status === "booked" ? `<span class="chip booked">${tr("gebucht", "booked")}</span>` : e.status === "skipped" ? `<span class="chip skipped">${tr("ausgefallen", "skipped")}</span>` : e.planned ? `<span class="chip planned">${tr("Termin", "scheduled")}</span>` : this._chip(e.certainty);
     return `<div class="entry ${e.status === "skipped" ? "skipped-row" : ""}" data-action="${e.budget ? "edit-item" : "open-entry"}" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}" data-amount="${Math.abs(e.amount)}" data-date="${esc(e.date)}" data-status="${esc(e.status ?? "")}" data-planned="${e.planned ? "1" : ""}">
       <div class="entry-icon">${this._icon(e.icon)}</div>
       <div class="entry-main">
@@ -576,8 +603,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       </div>
       <div class="entry-amount ${e.amount < 0 ? "neg" : "pos"}">${this._money(e.amount, true)}</div>
       ${confirm ? `<div class="entry-actions">
-        <button class="small" data-action="quick-confirm" data-status="booked" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}">gebucht</button>
-        <button class="small secondary" data-action="quick-confirm" data-status="skipped" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}">ausgefallen</button>
+        <button class="small" data-action="quick-confirm" data-status="booked" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}">${tr("gebucht", "booked")}</button>
+        <button class="small secondary" data-action="quick-confirm" data-status="skipped" data-item="${esc(e.item_id)}" data-due="${esc(e.due_date)}">${tr("ausgefallen", "skipped")}</button>
       </div>` : ""}
     </div>`;
   }
@@ -587,10 +614,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     const ranges = [7, 30, 90];
     const pending = this._pending.length
       ? `<div class="card">
-          <h3>Zu bestätigen</h3>
+          <h3>${tr("Zu bestätigen", "To confirm")}</h3>
           <div class="row-between">
-            <p class="hint">Diese Buchungen waren in den letzten drei Wochen fällig. Bestätigen hilft der App, die Sicherheit besser einzuschätzen.</p>
-            ${this._pending.length > 1 ? `<button class="small" data-action="confirm-all">Alle ${this._pending.length} gebucht</button>` : ""}
+            <p class="hint">${tr("Diese Buchungen waren in den letzten drei Wochen fällig. Bestätigen hilft der App, die Sicherheit besser einzuschätzen.", "These bookings were due in the last three weeks. Confirming them helps the app judge how certain future bookings are.")}</p>
+            ${this._pending.length > 1 ? `<button class="small" data-action="confirm-all">${tr(`Alle ${this._pending.length} gebucht`, `All ${this._pending.length} booked`)}</button>` : ""}
           </div>
           ${this._pending.map((e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry(e, { confirm: true, special: this._specialOf(e) })}`).join("")}
         </div>`
@@ -604,14 +631,14 @@ class HaushaltsbuchPanel extends HTMLElement {
             </div>`
           )
           .join("")
-      : `<div class="empty">In diesem Zeitraum ist nichts fällig.${this._state.items.length ? "" : " Lege unter „Posten“ deine ersten Einträge an."}</div>`;
+      : `<div class="empty">${tr("In diesem Zeitraum ist nichts fällig.", "Nothing is due in this period.")}${this._state.items.length ? "" : tr(" Lege unter „Posten“ deine ersten Einträge an.", " Add your first entries under “Entries”.")}</div>`;
     const deadlines = this._scopeItems()
       .filter((i) => i.contract_info && !i.contract_info.ended && i.contract_info.days_left <= 60)
       .sort((a, b) => a.contract_info.cancel_by.localeCompare(b.contract_info.cancel_by));
     const deadlineCard = deadlines.length
       ? `<div class="card">
-          <h3>Kündigungsfristen</h3>
-          <p class="hint">Verträge, die du in den nächsten 60 Tagen kündigen müsstest, wenn du sie loswerden willst.</p>
+          <h3>${tr("Kündigungsfristen", "Cancellation deadlines")}</h3>
+          <p class="hint">${tr("Verträge, die du in den nächsten 60 Tagen kündigen müsstest, wenn du sie loswerden willst.", "Contracts you would have to cancel within the next 60 days if you want to get rid of them.")}</p>
           ${deadlines
             .map((i) => {
               const c = i.contract_info;
@@ -619,9 +646,9 @@ class HaushaltsbuchPanel extends HTMLElement {
                 <div class="entry-icon">${this._icon(i.icon)}</div>
                 <div class="entry-main">
                   <div class="entry-name">${esc(i.name)}</div>
-                  <div class="entry-meta">Vertragsende ${shortDate(c.end)}${c.renews ? ", verlängert sich sonst" : ""}</div>
+                  <div class="entry-meta">${tr("Vertragsende", "Contract ends")} ${shortDate(c.end)}${c.renews ? tr(", verlängert sich sonst", ", renews otherwise") : ""}</div>
                 </div>
-                <div class="deadline ${c.days_left <= 14 ? "urgent" : ""}">bis ${shortDate(c.cancel_by)}<small>${c.days_left === 0 ? "heute" : `noch ${c.days_left} Tage`}</small></div>
+                <div class="deadline ${c.days_left <= 14 ? "urgent" : ""}">${tr("bis", "by")} ${shortDate(c.cancel_by)}<small>${c.days_left === 0 ? tr("heute", "today") : tr(`noch ${c.days_left} Tage`, `${c.days_left} days left`)}</small></div>
               </div>`;
             })
             .join("")}
@@ -633,10 +660,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     return `${pending}${deadlineCard}
       <div class="card">
         <div class="row-between">
-          <h3>Die nächsten ${this._range} Tage</h3>
-          <div class="segmented">${ranges.map((r) => `<button class="${r === this._range ? "active" : ""}" data-action="range" data-range="${r}">${r} Tage</button>`).join("")}</div>
+          <h3>${tr(`Die nächsten ${this._range} Tage`, `Next ${this._range} days`)}</h3>
+          <div class="segmented">${ranges.map((r) => `<button class="${r === this._range ? "active" : ""}" data-action="range" data-range="${r}">${r} ${tr("Tage", "days")}</button>`).join("")}</div>
         </div>
-        <p class="hint">Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.${budgetMonthly ? ` Budgets (${this._money(budgetMonthly)} pro Monat) sind gleichmäßig auf die Tage verteilt eingerechnet.` : ""}</p>
+        <p class="hint">${tr("Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.", "Next to each day is the expected balance with certain and likely entries. Uncertain entries are shown but not counted.")}${budgetMonthly ? tr(` Budgets (${this._money(budgetMonthly)} pro Monat) sind gleichmäßig auf die Tage verteilt eingerechnet.`, ` Budgets (${this._money(budgetMonthly)} per month) are spread evenly across the days.`) : ""}</p>
         ${list}
       </div>`;
   }
@@ -663,16 +690,16 @@ class HaushaltsbuchPanel extends HTMLElement {
     const selected = this._selectedDay && byDate[this._selectedDay];
     return `<div class="card">
       <div class="row-between">
-        <button class="icon-button" data-action="month" data-delta="-1" aria-label="Vorheriger Monat">‹</button>
-        <h3>${MONTHS[month.getMonth()]} ${month.getFullYear()}</h3>
-        <button class="icon-button" data-action="month" data-delta="1" aria-label="Nächster Monat">›</button>
+        <button class="icon-button" data-action="month" data-delta="-1" aria-label="${tr("Vorheriger Monat", "Previous month")}">‹</button>
+        <h3>${monthName(month.getMonth())} ${month.getFullYear()}</h3>
+        <button class="icon-button" data-action="month" data-delta="1" aria-label="${tr("Nächster Monat", "Next month")}">›</button>
       </div>
-      <div class="cal-grid">${WEEKDAYS.map((w) => `<div class="cal-head">${w}</div>`).join("")}${cells.join("")}</div>
+      <div class="cal-grid">${[0, 1, 2, 3, 4, 5, 6].map((w) => `<div class="cal-head">${weekdayName(w)}</div>`).join("")}${cells.join("")}</div>
     </div>
     ${!selected ? this._renderMonthList() : ""}
-    ${selected ? `<div class="card"><div class="row-between"><h3>${this._dateLabel(this._selectedDay)}</h3><button class="secondary small" data-action="select-day" data-day="">ganzer Monat</button></div>
-      ${selected.entries.length ? selected.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("") : `<div class="empty">Nichts fällig.</div>`}
-      ${selected.balance_likely !== null ? `<p class="hint">Erwarteter Kontostand am Ende des Tages: ${this._money(selected.balance_likely)} (nur sichere: ${this._money(selected.balance_sure)})</p>` : ""}
+    ${selected ? `<div class="card"><div class="row-between"><h3>${this._dateLabel(this._selectedDay)}</h3><button class="secondary small" data-action="select-day" data-day="">${tr("ganzer Monat", "whole month")}</button></div>
+      ${selected.entries.length ? selected.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("") : `<div class="empty">${tr("Nichts fällig.", "Nothing due.")}</div>`}
+      ${selected.balance_likely !== null ? `<p class="hint">${tr("Erwarteter Kontostand am Ende des Tages", "Expected balance at the end of the day")}: ${this._money(selected.balance_likely)} (${tr("nur sichere", "certain only")}: ${this._money(selected.balance_sure)})</p>` : ""}
     </div>` : ""}`;
   }
 
@@ -680,8 +707,8 @@ class HaushaltsbuchPanel extends HTMLElement {
     const days = (this._calendar?.days || []).filter((d) => d.entries.some((e) => e.status !== "skipped"));
     const t = iso(today());
     return `<div class="card">
-      <h3>Alle Buchungen im ${MONTHS[this._month.getMonth()]}</h3>
-      <p class="hint">Tippe oben auf einen Tag, um nur diesen Tag zu sehen.</p>
+      <h3>${tr(`Alle Buchungen im ${monthName(this._month.getMonth())}`, `All bookings in ${monthName(this._month.getMonth())}`)}</h3>
+      <p class="hint">${tr("Tippe oben auf einen Tag, um nur diesen Tag zu sehen.", "Tap a day above to see only that day.")}</p>
       ${days.length
         ? days
             .map(
@@ -691,7 +718,7 @@ class HaushaltsbuchPanel extends HTMLElement {
               </div>`
             )
             .join("")
-        : `<div class="empty">In diesem Monat ist nichts fällig.</div>`}
+        : `<div class="empty">${tr("In diesem Monat ist nichts fällig.", "Nothing is due this month.")}</div>`}
     </div>`;
   }
 
@@ -704,21 +731,21 @@ class HaushaltsbuchPanel extends HTMLElement {
     const households = Object.fromEntries(this._state.households.map((h) => [h.id, h.name]));
     return `<div class="card">
       <div class="row-between">
-        <h3>${this._isHousehold() ? "Posten im Haushalt" : "Meine Posten"}</h3>
-        <button data-action="new-item">+ Neuer Posten</button>
+        <h3>${this._isHousehold() ? tr("Posten im Haushalt", "Household entries") : tr("Meine Posten", "My entries")}</h3>
+        <button data-action="new-item">+ ${tr("Neuer Posten", "New entry")}</button>
       </div>
       <div class="totals">
-        <div><div class="label">Einnahmen pro Monat</div><div class="big pos">${this._money(monthlyIn)}</div></div>
-        <div><div class="label">Ausgaben pro Monat</div><div class="big neg">${this._money(monthlyOut)}</div></div>
-        <div><div class="label">Ausgaben pro Jahr</div><div class="big">${this._money(monthlyOut * 12)}</div></div>
+        <div><div class="label">${tr("Einnahmen pro Monat", "Income per month")}</div><div class="big pos">${this._money(monthlyIn)}</div></div>
+        <div><div class="label">${tr("Ausgaben pro Monat", "Expenses per month")}</div><div class="big neg">${this._money(monthlyOut)}</div></div>
+        <div><div class="label">${tr("Ausgaben pro Jahr", "Expenses per year")}</div><div class="big">${this._money(monthlyOut * 12)}</div></div>
       </div>
-      <p class="hint">Wiederkehrende Posten auf einen Monat umgerechnet, einmalige Posten zählen hier nicht mit.</p>
+      <p class="hint">${tr("Wiederkehrende Posten auf einen Monat umgerechnet, einmalige Posten zählen hier nicht mit.", "Recurring entries converted to one month; one-off entries are not included here.")}</p>
       ${this._isHousehold() ? "" : `<div class="row-actions">
-        <button class="secondary small" data-action="export">Exportieren</button>
-        <button class="secondary small" data-action="import">Importieren</button>
+        <button class="secondary small" data-action="export">${tr("Exportieren", "Export")}</button>
+        <button class="secondary small" data-action="import">${tr("Importieren", "Import")}</button>
         <input type="file" accept=".json,application/json" data-change="import-file" hidden>
       </div>`}
-      ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="Posten suchen …" aria-label="Posten suchen" value="${esc(this._search || "")}">` : ""}
+      ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="${tr("Posten suchen …", "Search entries …")}" aria-label="${tr("Posten suchen", "Search entries")}" value="${esc(this._search || "")}">` : ""}
     </div>
     ${items.length ? Object.keys(groups)
       .sort()
@@ -729,18 +756,18 @@ class HaushaltsbuchPanel extends HTMLElement {
               <div class="entry-icon">${this._icon(i.icon)}</div>
               <div class="entry-main">
                 <div class="entry-name">${esc(i.name)}</div>
-                <div class="entry-meta">${esc(scheduleLabel(i))} · ab ${parseIso(i.start_date).toLocaleDateString("de-DE")}${i.end_date ? ` bis ${parseIso(i.end_date).toLocaleDateString("de-DE")}` : ""}
-                  ${i.household_id && !this._isHousehold() ? `<span class="chip shared">${esc(households[i.household_id] || "Haushalt")}</span>` : ""}
+                <div class="entry-meta">${esc(scheduleLabel(i))} · ${tr("ab", "from")} ${fmtDate(i.start_date)}${i.end_date ? ` ${tr("bis", "until")} ${fmtDate(i.end_date)}` : ""}
+                  ${i.household_id && !this._isHousehold() ? `<span class="chip shared">${esc(households[i.household_id] || tr("Haushalt", "Household"))}</span>` : ""}
                   ${!i.editable ? `<span class="owner">${esc(i.owner_name)}</span>` : ""}
-                  ${i.contract_info && !i.contract_info.ended ? `<span class="chip contract ${i.contract_info.days_left <= 30 ? "urgent" : ""}">kündbar bis ${shortDate(i.contract_info.cancel_by)}</span>` : ""}
-                  ${i.contract_info?.ended ? `<span class="chip skipped">Vertrag beendet</span>` : ""}</div>
+                  ${i.contract_info && !i.contract_info.ended ? `<span class="chip contract ${i.contract_info.days_left <= 30 ? "urgent" : ""}">${tr("kündbar bis", "cancel by")} ${shortDate(i.contract_info.cancel_by)}</span>` : ""}
+                  ${i.contract_info?.ended ? `<span class="chip skipped">${tr("Vertrag beendet", "contract ended")}</span>` : ""}</div>
               </div>
-              <div class="entry-amount ${i.direction === "expense" ? "neg" : "pos"}">${this._money(i.direction === "expense" ? -(i.current_amount ?? i.amount) : i.current_amount ?? i.amount, true)}${(i.price_changes || []).some((c) => c.from > iso(today())) ? `<small class="price-note">ab ${shortDate(i.price_changes.find((c) => c.from > iso(today())).from)}: ${this._money(i.price_changes.find((c) => c.from > iso(today())).amount)}</small>` : ""}</div>
+              <div class="entry-amount ${i.direction === "expense" ? "neg" : "pos"}">${this._money(i.direction === "expense" ? -(i.current_amount ?? i.amount) : i.current_amount ?? i.amount, true)}${(i.price_changes || []).some((c) => c.from > iso(today())) ? `<small class="price-note">${tr("ab", "from")} ${shortDate(i.price_changes.find((c) => c.from > iso(today())).from)}: ${this._money(i.price_changes.find((c) => c.from > iso(today())).amount)}</small>` : ""}</div>
             </div>`
           )
           .join("")}</div>`
       )
-      .join("") : `<div class="card empty">Noch keine Posten. Tippe auf „Neuer Posten“ und wähle eine Vorlage wie GEZ, Gehalt oder Räderwechsel.</div>`}`;
+      .join("") : `<div class="card empty">${tr("Noch keine Posten. Tippe auf „Neuer Posten“ und wähle eine Vorlage wie GEZ, Gehalt oder Räderwechsel.", "No entries yet. Tap “New entry” and pick a template such as salary, rent or tyre change.")}</div>`}`;
   }
 
   _renderMonths() {
@@ -748,12 +775,12 @@ class HaushaltsbuchPanel extends HTMLElement {
     const itemsById = Object.fromEntries(this._state.items.map((i) => [i.id, i]));
     const max = Math.max(1, ...rows.map((r) => Math.max(r.income + r.uncertain_income, r.expense + r.uncertain_expense)));
     const barLine = (sure, unsure, cls) => {
-      const label = [sure ? this._money(sure) : "", unsure ? `+ ${this._money(unsure)} unsicher` : ""].filter(Boolean).join(" ");
+      const label = [sure ? this._money(sure) : "", unsure ? `+ ${this._money(unsure)} ${tr("unsicher", "uncertain")}` : ""].filter(Boolean).join(" ");
       return `<div class="bar-line"><span class="bar ${cls}" style="width:${(sure / max) * 100}%"></span><span class="bar ${cls} light" style="width:${(unsure / max) * 100}%"></span>${label ? `<span class="bar-value">${label}</span>` : ""}</div>`;
     };
     return `<div class="card">
-      <h3>Monatsübersicht</h3>
-      <p class="hint">Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.</p>
+      <h3>${tr("Monatsübersicht", "Monthly overview")}</h3>
+      <p class="hint">${tr("Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.", "What is actually booked in each month. Certain and likely entries as solid bars, uncertain ones as a lighter extra. Tap a month to see its bookings.")}</p>
       ${this._renderSpecialSettings()}
       <div class="months">
         ${rows
@@ -767,7 +794,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             const entryRow = (e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: this._isSpecial(itemsById[e.item_id], e.amount) && itemsById[e.item_id] })}`;
             return `<div class="month-block">
               <button class="month-row ${open ? "open" : ""}" data-action="toggle-month" data-month="${r.month}" aria-expanded="${open}">
-                <div class="month-name">${MONTHS[m - 1].slice(0, 3)} ${String(y).slice(2)}</div>
+                <div class="month-name">${monthName(m - 1).slice(0, 3)} ${String(y).slice(2)}</div>
                 <div class="bars">
                   ${barLine(r.income, r.uncertain_income, "pos-bg")}
                   ${barLine(r.expense, r.uncertain_expense, "neg-bg")}
@@ -778,8 +805,8 @@ class HaushaltsbuchPanel extends HTMLElement {
                   .join("")}</div>` : ""}
               </button>
               ${open ? `<div class="month-entries">${entries.length ? `
-                ${special.length ? `<div class="month-section special">★ Sonderposten diesen Monat <b>${this._money(specialSum, true)}</b></div>${special.map(entryRow).join("")}` : ""}
-                ${regular.length ? `<div class="month-section">Laufende Posten (jeden Monat)</div>${regular.map(entryRow).join("")}` : ""}` : `<div class="empty">Keine Buchungen in diesem Monat.</div>`}</div>` : ""}
+                ${special.length ? `<div class="month-section special">★ ${tr("Sonderposten diesen Monat", "Special entries this month")} <b>${this._money(specialSum, true)}</b></div>${special.map(entryRow).join("")}` : ""}
+                ${regular.length ? `<div class="month-section">${tr("Laufende Posten (jeden Monat)", "Regular entries (every month)")}</div>${regular.map(entryRow).join("")}` : ""}` : `<div class="empty">${tr("Keine Buchungen in diesem Monat.", "No bookings this month.")}</div>`}</div>` : ""}
             </div>`;
           })
           .join("")}
@@ -792,11 +819,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     const st = this._state.user.settings || {};
     const minMonths = st.special_min_months ?? 2;
     return `<div class="special-settings">
-      <span class="special-pill inline">★ Sonderposten</span>
-      <select data-change="special-months" aria-label="Sonderposten ab Turnus">
-        ${SPECIAL_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === minMonths ? "selected" : ""}>${l}</option>`).join("")}
+      <span class="special-pill inline">★ ${tr("Sonderposten", "Special entries")}</span>
+      <select data-change="special-months" aria-label="${tr("Sonderposten ab Turnus", "Special entries from interval")}">
+        ${SPECIAL_OPTIONS.map(([v, de, en]) => `<option value="${v}" ${v === minMonths ? "selected" : ""}>${tr(de, en)}</option>`).join("")}
       </select>
-      <label class="inline-amount">ab<input type="number" min="0" step="1" inputmode="decimal" data-change="special-amount" value="${st.special_min_amount || 0}" aria-label="Sonderposten ab Betrag"> ${esc(this._state.currency === "EUR" ? "€" : this._state.currency)}</label>
+      <label class="inline-amount">${tr("ab", "from")}<input type="number" min="0" step="1" inputmode="decimal" data-change="special-amount" value="${st.special_min_amount || 0}" aria-label="${tr("Sonderposten ab Betrag", "Special entries from amount")}"> ${esc(this._state.currency === "EUR" ? "€" : this._state.currency)}</label>
     </div>`;
   }
 
@@ -805,7 +832,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     this._state.user.settings = st;
     this._render();
     this._ws("settings", { settings: st }).catch((err) => {
-      this._error = err.message || String(err);
+      this._error = this._errorText(err);
       this._render();
     });
   }
@@ -815,7 +842,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     for (const r of rows) {
       for (const e of r.entries || []) {
         if (e.amount >= 0 || e.certainty === "unsicher") continue;
-        const t = (totals[e.category || "Sonstiges"] ||= { sum: 0, items: new Set() });
+        const t = (totals[e.category || tr("Sonstiges", "Other")] ||= { sum: 0, items: new Set() });
         t.sum += -e.amount;
         t.items.add(e.name);
       }
@@ -825,8 +852,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     const total = list.reduce((a, [, t]) => a + t.sum, 0);
     const max = list[0][1].sum;
     return `<div class="card">
-      <h3>Ausgaben nach Kategorie</h3>
-      <p class="hint">Durchschnitt pro Monat über die nächsten ${rows.length} Monate (sichere und wahrscheinliche Ausgaben, inklusive Budgets): <b>${this._money(total / rows.length)}</b> pro Monat, zusammen ${this._money(total)}. Klein darunter steht die Summe der ${rows.length} Monate.</p>
+      <h3>${tr("Ausgaben nach Kategorie", "Expenses by category")}</h3>
+      <p class="hint">${tr(
+        `Durchschnitt pro Monat über die nächsten ${rows.length} Monate (sichere und wahrscheinliche Ausgaben, inklusive Budgets): <b>${this._money(total / rows.length)}</b> pro Monat, zusammen ${this._money(total)}. Klein darunter steht die Summe der ${rows.length} Monate.`,
+        `Average per month over the next ${rows.length} months (certain and likely expenses, budgets included): <b>${this._money(total / rows.length)}</b> per month, ${this._money(total)} in total. The small figure is the sum over all ${rows.length} months.`
+      )}</p>
       ${list
         .map(
           ([cat, t]) => `<div class="cat-row">
@@ -843,10 +873,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     const hs = this._state.households;
     return `<div class="card">
       <div class="row-between">
-        <h3>Haushaltsbücher</h3>
-        <button data-action="new-household">+ Haushalt anlegen</button>
+        <h3>${tr("Haushaltsbücher", "Households")}</h3>
+        <button data-action="new-household">+ ${tr("Haushalt anlegen", "Add household")}</button>
       </div>
-      <p class="hint">In einem Haushaltsbuch siehst du die Posten aller Mitglieder zusammen. Deine Posten bleiben privat, bis du sie beim Bearbeiten einem Haushalt zuordnest.</p>
+      <p class="hint">${tr("In einem Haushaltsbuch siehst du die Posten aller Mitglieder zusammen. Deine Posten bleiben privat, bis du sie beim Bearbeiten einem Haushalt zuordnest.", "A household shows the entries of all its members together. Your entries stay private until you assign them to a household while editing.")}</p>
     </div>
     ${hs.length ? hs
       .map(
@@ -854,17 +884,17 @@ class HaushaltsbuchPanel extends HTMLElement {
           <div class="row-between">
             <h3>${esc(h.name)}</h3>
             <div class="actions">
-              ${h.is_creator ? `<button class="secondary" data-action="edit-household" data-id="${esc(h.id)}">Bearbeiten</button>` : `<button class="secondary" data-action="leave-household" data-id="${esc(h.id)}">Verlassen</button>`}
+              ${h.is_creator ? `<button class="secondary" data-action="edit-household" data-id="${esc(h.id)}">${tr("Bearbeiten", "Edit")}</button>` : `<button class="secondary" data-action="leave-household" data-id="${esc(h.id)}">${tr("Verlassen", "Leave")}</button>`}
             </div>
           </div>
-          <div class="entry-meta">Mitglieder: ${h.member_names.map(esc).join(", ")}</div>
+          <div class="entry-meta">${tr("Mitglieder", "Members")}: ${h.member_names.map(esc).join(", ")}</div>
           <label class="switch-row">
             <input type="checkbox" data-change="entities" data-id="${esc(h.id)}" ${h.entities ? "checked" : ""}>
-            <span>Als Kalender und Sensoren in Home Assistant anlegen<br><small>Diese Entitäten können alle Home-Assistant-Nutzer sehen.</small></span>
+            <span>${tr("Als Kalender und Sensoren in Home Assistant anlegen", "Create a calendar and sensors in Home Assistant")}<br><small>${tr("Diese Entitäten können alle Home-Assistant-Nutzer sehen.", "All Home Assistant users can see these entities.")}</small></span>
           </label>
         </div>`
       )
-      .join("") : `<div class="card empty">Noch kein Haushaltsbuch.</div>`}`;
+      .join("") : `<div class="card empty">${tr("Noch kein Haushaltsbuch.", "No household yet.")}</div>`}`;
   }
 
   // ---------------------------------------------------------------- dialogs
@@ -890,7 +920,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const hasEnd = d.hasEnd ?? Boolean(item.end_date);
     const dis = readOnly ? "disabled" : "";
     const templates = !item.id
-      ? `<div class="templates">${this._state.templates
+      ? `<div class="templates">${this._templates()
           .map((t, idx) => `<button type="button" class="template" data-action="template" data-index="${idx}">${this._icon(t.icon, 18)}<span>${esc(t.name)}</span></button>`)
           .join("")}</div>`
       : "";
@@ -899,69 +929,69 @@ class HaushaltsbuchPanel extends HTMLElement {
       return `${day}.${m}.`;
     });
     return `<form data-form="item">
-      <h2>${readOnly ? esc(item.name) : item.id ? "Posten bearbeiten" : "Neuer Posten"}</h2>
-      ${readOnly ? `<p class="hint">Dieser Posten gehört ${esc(item.owner_name)} und kann nur von dort geändert werden.</p>` : ""}
+      <h2>${readOnly ? esc(item.name) : item.id ? tr("Posten bearbeiten", "Edit entry") : tr("Neuer Posten", "New entry")}</h2>
+      ${readOnly ? `<p class="hint">${tr(`Dieser Posten gehört ${esc(item.owner_name)} und kann nur von dort geändert werden.`, `This entry belongs to ${esc(item.owner_name)} and can only be changed by them.`)}</p>` : ""}
       ${templates}
       <div class="grid">
-        <label class="full">Name<input name="name" required maxlength="100" value="${esc(item.name)}" ${dis}></label>
-        <label>Art<select name="direction" ${dis}>
-          <option value="expense" ${item.direction !== "income" ? "selected" : ""}>Ausgabe</option>
-          <option value="income" ${item.direction === "income" ? "selected" : ""}>Einnahme</option>
+        <label class="full">${tr("Name", "Name")}<input name="name" required maxlength="100" value="${esc(item.name)}" ${dis}></label>
+        <label>${tr("Art", "Type")}<select name="direction" ${dis}>
+          <option value="expense" ${item.direction !== "income" ? "selected" : ""}>${tr("Ausgabe", "Expense")}</option>
+          <option value="income" ${item.direction === "income" ? "selected" : ""}>${tr("Einnahme", "Income")}</option>
         </select></label>
-        <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required value="${this._amountValue(item.amount)}" ${dis}></label>
-        <label class="suggest-field">Kategorie<input name="category" autocomplete="off" required placeholder="Auswählen oder neue eingeben" value="${esc(item.category || "")}" ${dis}><div class="suggest" hidden></div></label>
-        <label class="suggest-field">Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Suchen, z.B. netflix, auto, haus – oder Emoji" value="${esc(item.icon || "")}" ${dis}><div class="suggest" hidden></div></label>
-        <label>Turnus<select name="preset" data-change="preset" ${dis}>
-          ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p.label}</option>`).join("")}
+        <label>${preset === "budget" ? tr("Budget pro Monat", "Budget per month") : (item.price_changes || []).length ? tr("Betrag am Anfang", "Initial amount") : tr("Betrag", "Amount")} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required value="${this._amountValue(item.amount)}" ${dis}></label>
+        <label class="suggest-field">${tr("Kategorie", "Category")}<input name="category" autocomplete="off" required placeholder="${tr("Auswählen oder neue eingeben", "Pick one or type a new one")}" value="${esc(item.category || "")}" ${dis}><div class="suggest" hidden></div></label>
+        <label class="suggest-field">${tr("Symbol", "Icon")} <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${tr("Suchen, z.B. auto, haus, strom – oder Emoji", "Search, e.g. car, home, flash – or emoji")}" value="${esc(item.icon || "")}" ${dis}><div class="suggest" hidden></div></label>
+        <label>${tr("Turnus", "Repeats")}<select name="preset" data-change="preset" ${dis}>
+          ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p[LANG]}</option>`).join("")}
         </select></label>
-        ${preset === "every_n_months" ? `<label>Alle wie viele Monate?<input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 2}" ${dis}></label>` : ""}
-        ${preset === "rolling" ? `<label>Nächster Termin nach<span class="inline-fields"><input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 1}" ${dis}><select name="unit" ${dis}>
-          <option value="months" ${item.schedule?.unit !== "weeks" ? "selected" : ""}>Monat(en)</option>
-          <option value="weeks" ${item.schedule?.unit === "weeks" ? "selected" : ""}>Woche(n)</option>
+        ${preset === "every_n_months" ? `<label>${tr("Alle wie viele Monate?", "Every how many months?")}<input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 2}" ${dis}></label>` : ""}
+        ${preset === "rolling" ? `<label>${tr("Nächster Termin nach", "Next date after")}<span class="inline-fields"><input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 1}" ${dis}><select name="unit" ${dis}>
+          <option value="months" ${item.schedule?.unit !== "weeks" ? "selected" : ""}>${tr("Monat(en)", "month(s)")}</option>
+          <option value="weeks" ${item.schedule?.unit === "weeks" ? "selected" : ""}>${tr("Woche(n)", "week(s)")}</option>
         </select></span></label>
-        <label class="check full"><input type="checkbox" name="learn" ${item.schedule?.learn !== false ? "checked" : ""} ${dis}> Abstand aus bestätigten Terminen lernen${item.learned_days ? ` (zurzeit ~${item.learned_days} Tage)` : ""}</label>
-        <p class="hint full">Der nächste Termin richtet sich nach dem letzten. Ab drei bestätigten Terminen rechnet die App mit deinem echten durchschnittlichen Abstand. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.</p>` : ""}
-        ${preset === "weekly" ? `<label>Alle wie viele Wochen?<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
-        ${preset === "budget" ? `<p class="hint full">Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird gleichmäßig über die Tage des Monats vom erwarteten Kontostand abgezogen und erscheint in der Monatsübersicht, aber nicht als einzelne Buchung.</p>` : ""}
-        ${preset === "fixed_dates" ? `<label class="full">Termine im Jahr (TT.MM., durch Komma getrennt)<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
-        <label>${preset === "once" ? "Datum" : preset === "fixed_dates" || preset === "budget" ? "Gültig ab" : preset === "rolling" ? "Erster Termin" : "Erste Fälligkeit"}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
+        <label class="check full"><input type="checkbox" name="learn" ${item.schedule?.learn !== false ? "checked" : ""} ${dis}> ${tr("Abstand aus bestätigten Terminen lernen", "Learn the interval from confirmed dates")}${item.learned_days ? tr(` (zurzeit ~${item.learned_days} Tage)`, ` (currently ~${item.learned_days} days)`) : ""}</label>
+        <p class="hint full">${tr("Der nächste Termin richtet sich nach dem letzten. Ab drei bestätigten Terminen rechnet die App mit deinem echten durchschnittlichen Abstand. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.", "The next date follows the last one. From three confirmed dates on, the app uses your real average interval. Tap an entry in the timeline to set a fixed date; all later ones move along.")}</p>` : ""}
+        ${preset === "weekly" ? `<label>${tr("Alle wie viele Wochen?", "Every how many weeks?")}<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
+        ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird gleichmäßig über die Tage des Monats vom erwarteten Kontostand abgezogen und erscheint in der Monatsübersicht, aber nicht als einzelne Buchung.", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance evenly across the days of the month and shows up in the monthly overview, but not as single bookings.")}</p>` : ""}
+        ${preset === "fixed_dates" ? `<label class="full">${tr("Termine im Jahr (TT.MM., durch Komma getrennt)", "Dates each year (DD.MM., comma separated)")}<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
+        <label>${preset === "once" ? tr("Datum", "Date") : preset === "fixed_dates" || preset === "budget" ? tr("Gültig ab", "Valid from") : preset === "rolling" ? tr("Erster Termin", "First date") : tr("Erste Fälligkeit", "First due date")}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
-          <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> Enddatum festlegen</label>
-          ${hasEnd ? `<input name="end_date" type="date" aria-label="Enddatum" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
+          <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> ${tr("Enddatum festlegen", "Set an end date")}</label>
+          ${hasEnd ? `<input name="end_date" type="date" aria-label="${tr("Enddatum", "End date")}" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
         </div>` : ""}
       </div>
       ${preset !== "once" ? this._renderPriceChanges(item, dis) : ""}
       ${preset !== "once" && preset !== "budget" ? this._renderContractFields(d, dis) : ""}
       <details ${item.amount_variance_pct || item.date_tolerance_days || item.certainty || item.weekend_shift ? "open" : ""}>
-        <summary>Schwankung und Sicherheit</summary>
+        <summary>${tr("Schwankung und Sicherheit", "Variation and certainty")}</summary>
         <div class="grid">
-          <label>Betrag schwankt um ± %<input name="amount_variance_pct" type="number" min="0" max="100" step="1" value="${item.amount_variance_pct || 0}" ${dis}></label>
-          <label>Datum schwankt um ± Tage<input name="date_tolerance_days" type="number" min="0" max="60" value="${item.date_tolerance_days || 0}" ${dis}></label>
-          <label>Sicherheit<select name="certainty" ${dis}>
-            <option value="">automatisch</option>
-            ${Object.keys(CERTAINTY).map((c) => `<option value="${c}" ${item.certainty === c ? "selected" : ""}>immer ${c}</option>`).join("")}
+          <label>${tr("Betrag schwankt um ± %", "Amount varies by ± %")}<input name="amount_variance_pct" type="number" min="0" max="100" step="1" value="${item.amount_variance_pct || 0}" ${dis}></label>
+          <label>${tr("Datum schwankt um ± Tage", "Date varies by ± days")}<input name="date_tolerance_days" type="number" min="0" max="60" value="${item.date_tolerance_days || 0}" ${dis}></label>
+          <label>${tr("Sicherheit", "Certainty")}<select name="certainty" ${dis}>
+            <option value="">${tr("automatisch", "automatic")}</option>
+            ${Object.keys(CERTAINTY).map((c) => `<option value="${c}" ${item.certainty === c ? "selected" : ""}>${tr("immer", "always")} ${certaintyLabel(c)}</option>`).join("")}
           </select></label>
-          <label>Wochenende/Feiertag<select name="weekend_shift" ${dis}>
-            <option value="">automatisch (nächster Bankarbeitstag)</option>
-            <option value="next" ${item.weekend_shift === "next" ? "selected" : ""}>nächster Bankarbeitstag</option>
-            <option value="previous" ${item.weekend_shift === "previous" ? "selected" : ""}>vorheriger Bankarbeitstag</option>
-            <option value="none" ${item.weekend_shift === "none" ? "selected" : ""}>nicht verschieben</option>
+          <label>${tr("Wochenende/Feiertag", "Weekend/holiday")}<select name="weekend_shift" ${dis}>
+            <option value="">${tr("automatisch (nächster Bankarbeitstag)", "automatic (next banking day)")}</option>
+            <option value="next" ${item.weekend_shift === "next" ? "selected" : ""}>${tr("nächster Bankarbeitstag", "next banking day")}</option>
+            <option value="previous" ${item.weekend_shift === "previous" ? "selected" : ""}>${tr("vorheriger Bankarbeitstag", "previous banking day")}</option>
+            <option value="none" ${item.weekend_shift === "none" ? "selected" : ""}>${tr("nicht verschieben", "don't move")}</option>
           </select></label>
         </div>
       </details>
       <div class="grid">
-        ${this._state.households.length ? `<label class="full">Sichtbar für<select name="household_id" ${dis}>
-          <option value="">nur mich</option>
-          ${this._state.households.map((h) => `<option value="${esc(h.id)}" ${item.household_id === h.id ? "selected" : ""}>Haushalt ${esc(h.name)}</option>`).join("")}
+        ${this._state.households.length ? `<label class="full">${tr("Sichtbar für", "Visible to")}<select name="household_id" ${dis}>
+          <option value="">${tr("nur mich", "only me")}</option>
+          ${this._state.households.map((h) => `<option value="${esc(h.id)}" ${item.household_id === h.id ? "selected" : ""}>${tr("Haushalt", "Household")} ${esc(h.name)}</option>`).join("")}
         </select></label>` : ""}
-        <label class="full">Notiz<textarea name="note" rows="2" maxlength="1000" ${dis}>${esc(item.note || "")}</textarea></label>
+        <label class="full">${tr("Notiz", "Note")}<textarea name="note" rows="2" maxlength="1000" ${dis}>${esc(item.note || "")}</textarea></label>
       </div>
       ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
       <div class="dialog-actions">
-        ${item.id && item.editable ? `<button type="button" class="danger" data-action="delete-item">Löschen</button>` : "<span></span>"}
+        ${item.id && item.editable ? `<button type="button" class="danger" data-action="delete-item">${tr("Löschen", "Delete")}</button>` : "<span></span>"}
         <div>
-          <button type="button" class="secondary" data-action="close">${readOnly ? "Schließen" : "Abbrechen"}</button>
-          ${readOnly ? "" : `<button type="submit">Speichern</button>`}
+          <button type="button" class="secondary" data-action="close">${readOnly ? tr("Schließen", "Close") : tr("Abbrechen", "Cancel")}</button>
+          ${readOnly ? "" : `<button type="submit">${tr("Speichern", "Save")}</button>`}
         </div>
       </div>
     </form>`;
@@ -970,18 +1000,18 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderPriceChanges(item, dis) {
     const changes = item.price_changes || [];
     return `<details ${changes.length ? "open" : ""}>
-      <summary>Preisänderungen${changes.length ? ` (${changes.length})` : ""}</summary>
-      <p class="hint">Wird es teurer oder günstiger, trag hier ein, ab wann der neue Betrag gilt. Frühere Buchungen behalten ihren alten Betrag.</p>
+      <summary>${tr("Preisänderungen", "Price changes")}${changes.length ? ` (${changes.length})` : ""}</summary>
+      <p class="hint">${tr("Wird es teurer oder günstiger, trag hier ein, ab wann der neue Betrag gilt. Frühere Buchungen behalten ihren alten Betrag.", "If the price goes up or down, enter when the new amount applies. Earlier bookings keep their old amount.")}</p>
       ${changes
         .map(
           (c, idx) => `<div class="price-row">
-            <label>ab<input name="pc_from" type="date" required value="${esc(c.from || "")}" ${dis}></label>
-            <label>neuer Betrag<input name="pc_amount" ${this._amountAttrs()} required value="${this._amountValue(c.amount)}" ${dis}></label>
-            ${dis ? "" : `<button type="button" class="danger small" data-action="price-remove" data-index="${idx}" aria-label="Preisänderung entfernen">✕</button>`}
+            <label>${tr("ab", "from")}<input name="pc_from" type="date" required value="${esc(c.from || "")}" ${dis}></label>
+            <label>${tr("neuer Betrag", "new amount")}<input name="pc_amount" ${this._amountAttrs()} required value="${this._amountValue(c.amount)}" ${dis}></label>
+            ${dis ? "" : `<button type="button" class="danger small" data-action="price-remove" data-index="${idx}" aria-label="${tr("Preisänderung entfernen", "Remove price change")}">✕</button>`}
           </div>`
         )
         .join("")}
-      ${dis ? "" : `<button type="button" class="secondary small" data-action="price-add">+ Preisänderung</button>`}
+      ${dis ? "" : `<button type="button" class="secondary small" data-action="price-add">+ ${tr("Preisänderung", "Price change")}</button>`}
     </details>`;
   }
 
@@ -991,17 +1021,17 @@ class HaushaltsbuchPanel extends HTMLElement {
     const hasContract = d.hasContract ?? Boolean(c.end);
     const info = item.contract_info;
     return `<details ${hasContract ? "open" : ""}>
-      <summary>Vertrag und Kündigung${info && !info.ended ? ` · kündbar bis ${shortDate(info.cancel_by)}` : ""}</summary>
-      <label class="check"><input type="checkbox" name="has_contract" data-change="has_contract" ${hasContract ? "checked" : ""} ${dis}> Vertragslaufzeit erfassen</label>
+      <summary>${tr("Vertrag und Kündigung", "Contract and cancellation")}${info && !info.ended ? ` · ${tr("kündbar bis", "cancel by")} ${shortDate(info.cancel_by)}` : ""}</summary>
+      <label class="check"><input type="checkbox" name="has_contract" data-change="has_contract" ${hasContract ? "checked" : ""} ${dis}> ${tr("Vertragslaufzeit erfassen", "Track contract term")}</label>
       ${hasContract ? `<div class="grid">
-        <label>Vertrag läuft bis<input name="contract_end" type="date" required value="${esc(c.end || "")}" ${dis}></label>
-        <label>Kündigungsfrist<span class="inline-fields"><input name="notice" type="number" min="0" max="365" value="${c.notice ?? 1}" ${dis}><select name="notice_unit" ${dis}>
-          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.notice_unit || "months") === k ? "selected" : ""}>${v}</option>`).join("")}
+        <label>${tr("Vertrag läuft bis", "Contract runs until")}<input name="contract_end" type="date" required value="${esc(c.end || "")}" ${dis}></label>
+        <label>${tr("Kündigungsfrist", "Notice period")}<span class="inline-fields"><input name="notice" type="number" min="0" max="365" value="${c.notice ?? 1}" ${dis}><select name="notice_unit" ${dis}>
+          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.notice_unit || "months") === k ? "selected" : ""}>${tr(v[0], v[1])}</option>`).join("")}
         </select></span></label>
-        <label>Verlängert sich danach um<span class="inline-fields"><input name="renew" type="number" min="0" max="365" value="${c.renew ?? c.renew_months ?? 12}" ${dis}><select name="renew_unit" ${dis}>
-          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.renew_unit || "months") === k ? "selected" : ""}>${v}</option>`).join("")}
+        <label>${tr("Verlängert sich danach um", "Then renews for")}<span class="inline-fields"><input name="renew" type="number" min="0" max="365" value="${c.renew ?? c.renew_months ?? 12}" ${dis}><select name="renew_unit" ${dis}>
+          ${Object.entries(NOTICE_UNITS).map(([k, v]) => `<option value="${k}" ${(c.renew_unit || "months") === k ? "selected" : ""}>${tr(v[0], v[1])}</option>`).join("")}
         </select></span></label>
-        <p class="hint full">0 heißt: Der Vertrag endet und verlängert sich nicht. ${info ? (info.ended ? `Der Vertrag ist am ${shortDate(info.end)} ausgelaufen.` : `Nächstes Vertragsende ${shortDate(info.end)}, kündigen spätestens am <b>${shortDate(info.cancel_by)}</b>.`) : ""}</p>
+        <p class="hint full">${tr("0 heißt: Der Vertrag endet und verlängert sich nicht.", "0 means: the contract ends and does not renew.")} ${info ? (info.ended ? tr(`Der Vertrag ist am ${shortDate(info.end)} ausgelaufen.`, `The contract ended on ${shortDate(info.end)}.`) : tr(`Nächstes Vertragsende ${shortDate(info.end)}, kündigen spätestens am <b>${shortDate(info.cancel_by)}</b>.`, `Next contract end ${shortDate(info.end)}, cancel by <b>${shortDate(info.cancel_by)}</b> at the latest.`)) : ""}</p>
       </div>` : ""}
     </details>`;
   }
@@ -1009,14 +1039,14 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderImportForm(d) {
     const own = this._state.items.filter((i) => i.owner === this._state.user.id).length;
     return `<form data-form="import">
-      <h2>Posten importieren</h2>
-      <p>Die Datei „${esc(d.fileName)}“ enthält <b>${d.data.items.length} Posten</b>${d.data.exported_at ? `, exportiert am ${parseIso(d.data.exported_at).toLocaleDateString("de-DE")}` : ""}.</p>
-      <label class="check option"><input type="radio" name="mode" value="add" checked> Hinzufügen: Posten, die es schon gibt (gleicher Name, Betrag und Startdatum), werden übersprungen.</label>
-      <label class="check option"><input type="radio" name="mode" value="replace"> Ersetzen: deine ${own} eigenen Posten werden vorher gelöscht, auch der Kontostand wird übernommen.</label>
-      <p class="hint">Importierte Posten sind zunächst privat. Bestätigte Buchungen und festgelegte Termine werden mit übernommen.</p>
+      <h2>${tr("Posten importieren", "Import entries")}</h2>
+      <p>${tr(`Die Datei „${esc(d.fileName)}“ enthält <b>${d.data.items.length} Posten</b>`, `The file “${esc(d.fileName)}” contains <b>${d.data.items.length} entries</b>`)}${d.data.exported_at ? `, ${tr("exportiert am", "exported on")} ${fmtDate(d.data.exported_at.slice(0, 10))}` : ""}.</p>
+      <label class="check option"><input type="radio" name="mode" value="add" checked> ${tr("Hinzufügen: Posten, die es schon gibt (gleicher Name, Betrag und Startdatum), werden übersprungen.", "Add: entries that already exist (same name, amount and start date) are skipped.")}</label>
+      <label class="check option"><input type="radio" name="mode" value="replace"> ${tr(`Ersetzen: deine ${own} eigenen Posten werden vorher gelöscht, auch der Kontostand wird übernommen.`, `Replace: your ${own} own entries are deleted first, and the balance is taken over too.`)}</label>
+      <p class="hint">${tr("Importierte Posten sind zunächst privat. Bestätigte Buchungen und festgelegte Termine werden mit übernommen.", "Imported entries start out private. Confirmed bookings and fixed dates are carried over.")}</p>
       <div class="dialog-actions"><span></span><div>
-        <button type="button" class="secondary" data-action="close">Abbrechen</button>
-        <button type="submit">Importieren</button>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit">${tr("Importieren", "Import")}</button>
       </div></div>
     </form>`;
   }
@@ -1052,7 +1082,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (err) {
-      this._error = err.message || String(err);
+      this._error = this._errorText(err);
       this._render();
     }
   }
@@ -1063,11 +1093,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error("Das ist keine Export-Datei des Haushaltsbuchs.");
+      if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error(tr("Das ist keine Export-Datei des Haushaltsbuchs.", "This is not a Household Budget export file."));
       this._error = null;
       this._dialog = { type: "import", data, fileName: file.name };
     } catch (err) {
-      this._error = err instanceof SyntaxError ? "Die Datei ist kein gültiges JSON." : err.message;
+      this._error = err instanceof SyntaxError ? tr("Die Datei ist kein gültiges JSON.", "The file is not valid JSON.") : err.message;
     }
     this._render();
   }
@@ -1075,15 +1105,15 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderBalanceForm() {
     const b = this._scopeBalance();
     return `<form data-form="balance">
-      <h2>${this._isHousehold() ? "Haushaltskonto" : "Kontostand"} setzen</h2>
-      <p class="hint">Trage den Stand aus deiner Banking-App ein. Alle Buchungen bis einschließlich zu diesem Datum gelten als enthalten.</p>
+      <h2>${this._isHousehold() ? tr("Haushaltskonto setzen", "Set household balance") : tr("Kontostand setzen", "Set balance")}</h2>
+      <p class="hint">${tr("Trage den Stand aus deiner Banking-App ein. Alle Buchungen bis einschließlich zu diesem Datum gelten als enthalten.", "Enter the balance from your banking app. All bookings up to and including this date count as included.")}</p>
       <div class="grid">
-        <label>Kontostand (${esc(this._state.currency)})<input name="balance" ${this._amountAttrs(true)} required value="${this._amountValue(b.balance)}"></label>
-        <label>Stand vom<input name="balance_date" type="date" required value="${iso(today())}"></label>
+        <label>${tr("Kontostand", "Balance")} (${esc(this._state.currency)})<input name="balance" ${this._amountAttrs(true)} required value="${this._amountValue(b.balance)}"></label>
+        <label>${tr("Stand vom", "As of")}<input name="balance_date" type="date" required value="${iso(today())}"></label>
       </div>
       <div class="dialog-actions"><span></span><div>
-        <button type="button" class="secondary" data-action="close">Abbrechen</button>
-        <button type="submit">Speichern</button>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit">${tr("Speichern", "Save")}</button>
       </div></div>
     </form>`;
   }
@@ -1094,27 +1124,30 @@ class HaushaltsbuchPanel extends HTMLElement {
     const future = d.date > iso(today());
     const booked = d.status === "booked";
     const hint = booked
-      ? "Diese Buchung ist als gebucht bestätigt."
+      ? tr("Diese Buchung ist als gebucht bestätigt.", "This booking is confirmed as booked.")
       : future
-        ? `Geplant für ${parseIso(d.date).toLocaleDateString("de-DE")}. Hast du schon einen festen Termin? Dann Datum und Betrag anpassen und als Termin festlegen.${rolling ? " Alle weiteren Termine rücken danach automatisch nach." : " Das verschiebt nur diese eine Buchung."}`
-        : `Fällig am ${parseIso(d.date).toLocaleDateString("de-DE")}. Ist die Buchung so auf dem Konto angekommen?`;
+        ? tr(
+            `Geplant für ${fmtDate(d.date)}. Hast du schon einen festen Termin? Dann Datum und Betrag anpassen und als Termin festlegen.${rolling ? " Alle weiteren Termine rücken danach automatisch nach." : " Das verschiebt nur diese eine Buchung."}`,
+            `Planned for ${fmtDate(d.date)}. Already have a fixed date? Adjust date and amount and set it as scheduled.${rolling ? " All later dates move along automatically." : " This only moves this one booking."}`
+          )
+        : tr(`Fällig am ${fmtDate(d.date)}. Ist die Buchung so auf dem Konto angekommen?`, `Due on ${fmtDate(d.date)}. Did the booking reach the account like this?`);
     return `<form data-form="confirm">
-      <h2>${esc(item?.name || "Buchung")}</h2>
+      <h2>${esc(item?.name || tr("Buchung", "Booking"))}</h2>
       <p class="hint">${hint}</p>
       <div class="grid">
-        <label>Datum<input name="actual_date" type="date" required value="${esc(d.date)}"></label>
-        <label>Betrag<input name="actual_amount" ${this._amountAttrs()} value="${this._amountValue(d.amount)}"></label>
+        <label>${tr("Datum", "Date")}<input name="actual_date" type="date" required value="${esc(d.date)}"></label>
+        <label>${tr("Betrag", "Amount")}<input name="actual_amount" ${this._amountAttrs()} value="${this._amountValue(d.amount)}"></label>
       </div>
       <div class="dialog-actions">
         <div>
-          ${item ? `<button type="button" class="secondary" data-action="edit-item" data-item="${esc(item.id)}">Posten öffnen</button>` : ""}
-          ${d.status ? `<button type="button" class="secondary" data-action="reset-confirm">Bestätigung zurücksetzen</button>` : ""}
-          ${d.planned && !booked ? `<button type="button" class="secondary" data-action="plan-clear">Termin entfernen</button>` : ""}
+          ${item ? `<button type="button" class="secondary" data-action="edit-item" data-item="${esc(item.id)}">${tr("Posten öffnen", "Open entry")}</button>` : ""}
+          ${d.status ? `<button type="button" class="secondary" data-action="reset-confirm">${tr("Bestätigung zurücksetzen", "Reset confirmation")}</button>` : ""}
+          ${d.planned && !booked ? `<button type="button" class="secondary" data-action="plan-clear">${tr("Termin entfernen", "Remove date")}</button>` : ""}
         </div>
         <div>
-          ${booked ? "" : `<button type="button" class="${future ? "" : "secondary"}" data-action="plan-save">${d.planned ? "Termin ändern" : "Als Termin festlegen"}</button>`}
-          <button type="button" class="secondary" data-action="confirm-skip">Ausgefallen</button>
-          <button type="submit" class="${future && !booked ? "secondary" : ""}">Gebucht</button>
+          ${booked ? "" : `<button type="button" class="${future ? "" : "secondary"}" data-action="plan-save">${d.planned ? tr("Termin ändern", "Change date") : tr("Als Termin festlegen", "Set as scheduled")}</button>`}
+          <button type="button" class="secondary" data-action="confirm-skip">${tr("Ausgefallen", "Skipped")}</button>
+          <button type="submit" class="${future && !booked ? "secondary" : ""}">${tr("Gebucht", "Booked")}</button>
         </div>
       </div>
     </form>`;
@@ -1123,12 +1156,12 @@ class HaushaltsbuchPanel extends HTMLElement {
   _renderHouseholdForm(d) {
     const h = d.household || { name: "", members: [this._state.user.id] };
     return `<form data-form="household">
-      <h2>${h.id ? "Haushalt bearbeiten" : "Haushalt anlegen"}</h2>
+      <h2>${h.id ? tr("Haushalt bearbeiten", "Edit household") : tr("Haushalt anlegen", "Add household")}</h2>
       <div class="grid">
-        <label class="full">Name<input name="name" required maxlength="60" value="${esc(h.name)}" placeholder="z.B. Familie"></label>
+        <label class="full">${tr("Name", "Name")}<input name="name" required maxlength="60" value="${esc(h.name)}" placeholder="${tr("z.B. Familie", "e.g. Family")}"></label>
       </div>
       <div class="members">
-        <div class="label">Mitglieder</div>
+        <div class="label">${tr("Mitglieder", "Members")}</div>
         ${this._state.users
           .map(
             (u) => `<label class="check"><input type="checkbox" name="members" value="${esc(u.id)}" ${h.members.includes(u.id) ? "checked" : ""} ${u.id === this._state.user.id ? "disabled checked" : ""}> ${esc(u.name)}</label>`
@@ -1136,10 +1169,10 @@ class HaushaltsbuchPanel extends HTMLElement {
           .join("")}
       </div>
       <div class="dialog-actions">
-        ${h.id ? `<button type="button" class="danger" data-action="delete-household">Löschen</button>` : "<span></span>"}
+        ${h.id ? `<button type="button" class="danger" data-action="delete-household">${tr("Löschen", "Delete")}</button>` : "<span></span>"}
         <div>
-          <button type="button" class="secondary" data-action="close">Abbrechen</button>
-          <button type="submit">Speichern</button>
+          <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+          <button type="submit">${tr("Speichern", "Save")}</button>
         </div>
       </div>
     </form>`;
@@ -1210,12 +1243,16 @@ class HaushaltsbuchPanel extends HTMLElement {
       );
     } else if (kind === "import") {
       const replace = new FormData(form).get("mode") === "replace";
-      if (replace && !confirm("Alle deine eigenen Posten werden durch den Import ersetzt. Fortfahren?")) return;
+      if (replace && !confirm(tr("Alle deine eigenen Posten werden durch den Import ersetzt. Fortfahren?", "All your own entries will be replaced by the import. Continue?"))) return;
       const data = this._dialog.data;
       this._run(async () => {
         const r = await this._ws("import", { data, replace });
         setTimeout(() => {
-          this._dialog = { type: "notice", title: "Import abgeschlossen", text: `${r.added} Posten importiert${r.skipped ? `, ${r.skipped} schon vorhanden und übersprungen` : ""}.` };
+          this._dialog = {
+            type: "notice",
+            title: tr("Import abgeschlossen", "Import finished"),
+            text: tr(`${r.added} Posten importiert${r.skipped ? `, ${r.skipped} schon vorhanden und übersprungen` : ""}.`, `${r.added} entries imported${r.skipped ? `, ${r.skipped} already existed and were skipped` : ""}.`),
+          };
           this._render();
         });
       });
@@ -1281,9 +1318,9 @@ class HaushaltsbuchPanel extends HTMLElement {
       for (const item of this._state?.items || []) {
         if (item.category && item.icon && !iconOf[item.category]) iconOf[item.category] = item.icon;
       }
-      matches = (this._state?.categories || [])
+      matches = ((LANG === "de" ? this._state?.categories : this._state?.categories_en) || this._state?.categories || [])
         .filter((c) => c.toLowerCase().includes(q))
-        .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)) || a.localeCompare(b, "de"))
+        .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)) || a.localeCompare(b, LANG))
         .map((c) => [c, iconOf[c] || "mdi:tag-outline", c]);
     }
     if (!matches.length || (matches.length === 1 && matches[0][0] === query.trim())) {
@@ -1403,7 +1440,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._render();
         break;
       case "template": {
-        const t = this._state.templates[Number(target.dataset.index)];
+        const t = this._templates()[Number(target.dataset.index)];
         const form = target.closest("form");
         const current = this._readItemForm(form);
         this._dialog.item = {
@@ -1432,7 +1469,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         break;
       }
       case "delete-item":
-        if (confirm(`„${this._dialog.item.name}“ wirklich löschen?`)) this._run(() => this._ws("item/delete", { item_id: this._dialog.item.id }));
+        if (confirm(tr(`„${this._dialog.item.name}“ wirklich löschen?`, `Really delete “${this._dialog.item.name}”?`))) this._run(() => this._ws("item/delete", { item_id: this._dialog.item.id }));
         break;
       case "open-entry":
         this._dialog = { type: "confirm", item_id: target.dataset.item, due: target.dataset.due, date: target.dataset.date, amount: target.dataset.amount, status: target.dataset.status, planned: Boolean(target.dataset.planned) };
@@ -1467,10 +1504,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._render();
         break;
       case "delete-household":
-        if (confirm("Haushalt löschen? Die Posten bleiben bei ihren Besitzern erhalten und werden wieder privat.")) this._run(() => this._ws("household/delete", { household_id: this._dialog.household.id }));
+        if (confirm(tr("Haushalt löschen? Die Posten bleiben bei ihren Besitzern erhalten und werden wieder privat.", "Delete household? The entries stay with their owners and become private again."))) this._run(() => this._ws("household/delete", { household_id: this._dialog.household.id }));
         break;
       case "leave-household":
-        if (confirm("Haushalt verlassen? Deine Posten darin werden wieder privat.")) this._run(() => this._ws("household/leave", { household_id: target.dataset.id }));
+        if (confirm(tr("Haushalt verlassen? Deine Posten darin werden wieder privat.", "Leave household? Your entries in it become private again."))) this._run(() => this._ws("household/leave", { household_id: target.dataset.id }));
         break;
       default:
         break;
@@ -1482,7 +1519,9 @@ const STYLES = `
   :host { display: block; min-height: 100vh; background: var(--primary-background-color); color: var(--primary-text-color); font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
   * { box-sizing: border-box; }
   .toolbar { display: flex; align-items: center; gap: 8px; height: var(--header-height, 56px); padding: 0 12px; background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); }
-  .title { flex: 1; font-size: 20px; }
+  .title { flex: 1; font-size: 20px; white-space: nowrap; }
+  .title-short { display: none; }
+  @media (max-width: 520px) { .title-long { display: none; } .title-short { display: inline; } }
   .scope { max-width: 50vw; background: rgba(255,255,255,0.15); color: inherit; border: 1px solid rgba(255,255,255,0.4); border-radius: 6px; padding: 6px 8px; font-size: 14px; }
   .scope option { color: var(--primary-text-color); background: var(--card-background-color); }
   .tabs { display: flex; gap: 4px; overflow-x: auto; padding: 0 8px; background: var(--app-header-background-color, var(--primary-color)); }

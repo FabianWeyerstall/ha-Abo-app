@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.5.11"
+VERSION = "0.6.0"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -11,6 +11,7 @@ PANEL_URL_PATH = "haushaltsbuch"
 PANEL_WEBCOMPONENT = "haushaltsbuch-panel"
 PANEL_STATIC_URL = "/haushaltsbuch_static"
 PANEL_TITLE = "Haushaltsbuch"
+PANEL_TITLE_EN = "Household Budget"
 PANEL_ICON = "mdi:cash-clock"
 
 SIGNAL_UPDATED = f"{DOMAIN}_updated"
@@ -73,4 +74,58 @@ TEMPLATES = [
     {"name": "Lebensmittel", "direction": "expense", "category": "Lebensmittel", "icon": "mdi:cart", "frequency": "budget"},
     {"name": "Tanken", "direction": "expense", "category": "Auto", "icon": "mdi:gas-station", "frequency": "rolling", "interval": 2, "unit": "weeks", "amount_variance_pct": 20},
     {"name": "Räderwechsel", "direction": "expense", "category": "Auto", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
+]
+
+
+# English defaults for users whose Home Assistant language is not German.
+DEFAULT_CATEGORIES_EN = [
+    "Income",
+    "Salary",
+    "Solar",
+    "Housing",
+    "Electricity",
+    "Water",
+    "Loans",
+    "Savings",
+    "Insurance",
+    "Car",
+    "Motorcycle",
+    "Taxes",
+    "Internet & Phone",
+    "TV & Streaming",
+    "Subscriptions",
+    "Children",
+    "Clubs",
+    "Health & Care",
+    "Groceries",
+    "Other",
+]
+
+TEMPLATES_EN = [
+    {"name": "Salary", "direction": "income", "category": "Salary", "icon": "mdi:briefcase", "frequency": "monthly", "weekend_shift": "previous"},
+    {"name": "Bonus", "direction": "income", "category": "Income", "icon": "mdi:gift", "frequency": "once", "certainty": "unsicher"},
+    {"name": "Solar feed-in", "direction": "income", "category": "Solar", "icon": "mdi:solar-power-variant", "frequency": "monthly"},
+    {"name": "Tax refund", "direction": "income", "category": "Taxes", "icon": "mdi:cash-refund", "frequency": "once", "certainty": "unsicher"},
+    {"name": "Rent", "direction": "expense", "category": "Housing", "icon": "mdi:home-city", "frequency": "monthly"},
+    {"name": "Electricity", "direction": "expense", "category": "Electricity", "icon": "mdi:flash", "frequency": "monthly"},
+    {"name": "Water", "direction": "expense", "category": "Water", "icon": "mdi:water", "frequency": "monthly"},
+    {"name": "Loan", "direction": "expense", "category": "Loans", "icon": "mdi:bank", "frequency": "monthly"},
+    {"name": "Savings plan", "direction": "expense", "category": "Savings", "icon": "mdi:piggy-bank", "frequency": "monthly"},
+    {"name": "Car insurance", "direction": "expense", "category": "Insurance", "icon": "mdi:car", "frequency": "yearly"},
+    {"name": "Motorcycle insurance", "direction": "expense", "category": "Insurance", "icon": "mdi:motorbike", "frequency": "yearly"},
+    {"name": "Vehicle tax", "direction": "expense", "category": "Taxes", "icon": "mdi:car-info", "frequency": "yearly"},
+    {"name": "Travel insurance", "direction": "expense", "category": "Insurance", "icon": "mdi:airplane", "frequency": "yearly"},
+    {"name": "Life insurance", "direction": "expense", "category": "Insurance", "icon": "mdi:heart-pulse", "frequency": "monthly"},
+    {"name": "Club membership", "direction": "expense", "category": "Clubs", "icon": "mdi:account-group", "frequency": "yearly"},
+    {"name": "Internet", "direction": "expense", "category": "Internet & Phone", "icon": "mdi:router-wireless", "frequency": "monthly"},
+    {"name": "Mobile phone", "direction": "expense", "category": "Internet & Phone", "icon": "mdi:cellphone", "frequency": "monthly"},
+    {"name": "Netflix", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:netflix", "frequency": "monthly"},
+    {"name": "Amazon Prime", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:shopping", "frequency": "yearly"},
+    {"name": "Disney+", "direction": "expense", "category": "TV & Streaming", "icon": "mdi:filmstrip", "frequency": "monthly"},
+    {"name": "Apple", "direction": "expense", "category": "Subscriptions", "icon": "mdi:apple", "frequency": "monthly"},
+    {"name": "Hairdresser", "direction": "expense", "category": "Health & Care", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
+    {"name": "Childcare", "direction": "expense", "category": "Children", "icon": "mdi:human-male-child", "frequency": "monthly"},
+    {"name": "Groceries", "direction": "expense", "category": "Groceries", "icon": "mdi:cart", "frequency": "budget"},
+    {"name": "Fuel", "direction": "expense", "category": "Car", "icon": "mdi:gas-station", "frequency": "rolling", "interval": 2, "unit": "weeks", "amount_variance_pct": 20},
+    {"name": "Tyre change", "direction": "expense", "category": "Car", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
 ]

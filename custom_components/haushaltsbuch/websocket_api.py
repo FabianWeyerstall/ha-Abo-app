@@ -14,7 +14,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DEFAULT_CATEGORIES, DOMAIN, TEMPLATES
+from .const import DEFAULT_CATEGORIES, DEFAULT_CATEGORIES_EN, DOMAIN, TEMPLATES, TEMPLATES_EN
 from .engine import (
     amount_on,
     contract_info,
@@ -57,15 +57,15 @@ def _handler(func: Callable) -> Callable:
     async def wrapper(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
         data = hass.data.get(DOMAIN)
         if data is None:
-            connection.send_error(msg["id"], "not_loaded", "Haushaltsbuch ist nicht geladen")
+            connection.send_error(msg["id"], "not_loaded", "Haushaltsbuch is not loaded")
             return
         try:
             result, changed = await func(hass, connection, msg, data)
         except AccessError as err:
-            connection.send_error(msg["id"], "unauthorized", f"Kein Zugriff: {err}")
+            connection.send_error(msg["id"], "unauthorized", str(err))
             return
         except ValidationError as err:
-            connection.send_error(msg["id"], "invalid_format", f"Ungültiger Wert: {err}")
+            connection.send_error(msg["id"], "invalid_format", str(err))
             return
         if changed:
             await data.async_changed()
@@ -131,9 +131,9 @@ async def ws_state(hass, connection, msg, data):
         for household in book.households_for(user_id)
     ]
     user = book.user(user_id)
-    categories = sorted(
-        set(DEFAULT_CATEGORIES) | {i["category"] for i in items if i.get("category")}
-    )
+    used = {i["category"] for i in items if i.get("category")}
+    categories = sorted(set(DEFAULT_CATEGORIES) | used)
+    categories_en = sorted(set(DEFAULT_CATEGORIES_EN) | used)
     return (
         {
             "user": {"id": user_id, "name": names.get(user_id, ""), **user},
@@ -141,7 +141,9 @@ async def ws_state(hass, connection, msg, data):
             "items": sorted(items, key=lambda i: i["name"].lower()),
             "households": households,
             "categories": categories,
+            "categories_en": categories_en,
             "templates": TEMPLATES,
+            "templates_en": TEMPLATES_EN,
             "currency": hass.config.currency,
         },
         False,

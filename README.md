@@ -5,7 +5,7 @@
 [![Prüfungen](https://img.shields.io/github/actions/workflow/status/FabianWeyerstall/ha-haushaltsbuch/validate.yml?branch=main&label=Pr%C3%BCfungen)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/actions/workflows/validate.yml)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-18BCF2.svg?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg)](LICENSE)
-[![Sprache](https://img.shields.io/badge/Sprache-Deutsch-black.svg)](#)
+[![Sprache](https://img.shields.io/badge/Sprache-Deutsch%20%7C%20English-black.svg)](#)
 
 🇬🇧 **English version:** [README.en.md](README.en.md)
 
@@ -243,6 +243,7 @@ Das Auge oben in der Leiste macht alle Beträge und Kontostände unscharf, auch 
 - **„Ausgefallen“ heißt: kommt diesmal gar nicht.** Für „kommt später“ die Buchung offen lassen oder einen Termin festlegen.
 - **Unregelmäßige Ausgaben** wie Lebensmittel oder Freizeit am besten als **Budget pro Monat** erfassen statt als viele einzelne Posten.
 - **Privatsphäre:** Private Posten sieht nur ihr Besitzer, auch HA-Admins nicht. Kalender und Sensoren eines Haushalts sind dagegen für alle HA-Nutzer sichtbar und deshalb standardmäßig aus.
+- **Sprache:** Die Oberfläche richtet sich nach der Sprache in deinem HA-Profil: Deutsch bei Deutsch, sonst Englisch. Für englische Push-Nachrichten gibt es den Blueprint `contract_reminder.yaml`.
 - **Updates:** Betrifft ein Update nur die Oberfläche, reicht es, die Seite neu zu laden (in der iPhone-App eventuell den Frontend-Cache leeren). Ändert sich die Berechnung im Hintergrund, braucht Home Assistant einen Neustart. HACS weist dann darauf hin.
 
 ## Entwicklung

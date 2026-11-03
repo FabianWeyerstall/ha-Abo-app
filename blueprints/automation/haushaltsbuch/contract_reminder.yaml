@@ -1,0 +1,53 @@
+blueprint:
+  name: "Household Budget: cancellation deadline to phone"
+  description: >-
+    Sends a notification to your phone when a contract from the Household
+    Budget (Haushaltsbuch) has to be cancelled within 30, 7 or 1 day(s). The
+    integration checks this every morning at 9:00. To test, run the action
+    "Send contract reminders" with "All upcoming" switched on.
+  domain: automation
+  source_url: https://github.com/FabianWeyerstall/ha-haushaltsbuch/blob/main/blueprints/automation/haushaltsbuch/contract_reminder.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: The device from the Home Assistant app that gets notified.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    only_household:
+      name: Only contracts of one household
+      description: >-
+        Leave empty for all contracts. Otherwise enter the household name,
+        e.g. "Family".
+      default: ""
+      selector:
+        text:
+
+mode: queued
+max: 20
+
+variables:
+  only_household: !input only_household
+
+triggers:
+  - trigger: event
+    event_type: haushaltsbuch_kuendigungsfrist
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ only_household == '' or trigger.event.data.household == only_household }}
+
+actions:
+  - variables:
+      d: "{{ trigger.event.data }}"
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "Cancellation deadline: {{ d.name }}"
+    message: >-
+      {% if d.days_left == 0 %}Today{% elif d.days_left == 1 %}Tomorrow{% else %}In {{ d.days_left }} days{% endif %}
+      ({{ as_datetime(d.cancel_by).strftime('%b %d, %Y') }}) is the last day to cancel.
+      {% if d.renews %}Otherwise the contract renews after {{ as_datetime(d.contract_end).strftime('%b %d, %Y') }}.{% else %}The contract ends on {{ as_datetime(d.contract_end).strftime('%b %d, %Y') }}.{% endif %}
+      {{ '%.2f' | format(d.amount) }} per booking.
