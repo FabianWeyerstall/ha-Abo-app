@@ -214,8 +214,10 @@ The dashboard at a glance: balance, expected balance at month end, income and ex
 - **Where most of the money goes:** a pie chart of expenses by category (the five largest, the rest under "Others").
 - **Fixed costs, special entries and budgets** as shares of an average month.
 - **How certain are the expenses?** Share of certain, likely and uncertain expenses.
-- **Expenses by schedule** and the **largest expenses**, each converted to one month. Tap to open the entry.
+- **What each schedule costs per month** and the **largest expenses**, each converted to one month. Tap to open the entry.
 - **Special entries in the next 3 months.**
+
+Tap a share (e.g. "likely", "Special entries, spread", a category or a schedule) to see the entries behind it. The ⓘ next to a heading briefly explains how the figure is calculated.
 
 ## Shared household book
 
