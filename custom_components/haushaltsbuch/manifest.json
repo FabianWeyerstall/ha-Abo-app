@@ -4,11 +4,11 @@
   "codeowners": ["@FabianWeyerstall"],
   "config_flow": true,
   "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
-  "documentation": "https://github.com/FabianWeyerstall/ha-Abo-app",
+  "documentation": "https://github.com/FabianWeyerstall/ha-haushaltsbuch",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/FabianWeyerstall/ha-Abo-app/issues",
+  "issue_tracker": "https://github.com/FabianWeyerstall/ha-haushaltsbuch/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.5.5"
+  "version": "0.5.6"
 }
