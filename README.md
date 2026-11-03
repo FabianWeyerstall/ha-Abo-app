@@ -7,6 +7,8 @@
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg)](LICENSE)
 [![Sprache](https://img.shields.io/badge/Sprache-Deutsch-black.svg)](#)
 
+🇬🇧 **English version:** [README.en.md](README.en.md)
+
 Zeigt dir in Home Assistant, wann welche Abbuchung oder Einnahme ansteht und wie sicher sie ist: Abos, Verträge, Steuern, Gehalt, Bonus, Photovoltaik oder auch der Räderwechsel zweimal im Jahr. Daraus rechnet es aus, wie viel voraussichtlich an jedem Tag auf deinem Konto ist.
 
 Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten bleiben in deinem Home Assistant (sie landen automatisch in den HA-Backups).
@@ -98,8 +100,6 @@ Tab **Posten** → **+ Neuer Posten**.
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/08-neuer-posten.png" alt="Neuer Posten mit Vorlage" width="240">
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/09-posten-details.png" alt="Vertrag und Schwankung" width="240">
 </p>
-
-Tab **Posten** → **+ Neuer Posten**.
 
 1. Oben eine **Vorlage** antippen (z.B. GEZ, Gehalt, Internet). Sie füllt Name, Kategorie, Symbol und Turnus aus.
 2. **Betrag** und **Erste Fälligkeit** (die nächste Abbuchung) eintragen.
@@ -243,7 +243,7 @@ Das Auge oben in der Leiste macht alle Beträge und Kontostände unscharf, auch 
 - **„Ausgefallen“ heißt: kommt diesmal gar nicht.** Für „kommt später“ die Buchung offen lassen oder einen Termin festlegen.
 - **Unregelmäßige Ausgaben** wie Lebensmittel oder Freizeit am besten als **Budget pro Monat** erfassen statt als viele einzelne Posten.
 - **Privatsphäre:** Private Posten sieht nur ihr Besitzer, auch HA-Admins nicht. Kalender und Sensoren eines Haushalts sind dagegen für alle HA-Nutzer sichtbar und deshalb standardmäßig aus.
-- **Updates:** Nach einem Update über HACS Home Assistant neu starten, dann lädt der Browser auch die neue Oberfläche.
+- **Updates:** Betrifft ein Update nur die Oberfläche, reicht es, die Seite neu zu laden (in der iPhone-App eventuell den Frontend-Cache leeren). Ändert sich die Berechnung im Hintergrund, braucht Home Assistant einen Neustart. HACS weist dann darauf hin.
 
 ## Entwicklung
 
