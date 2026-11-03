@@ -64,7 +64,7 @@ What you change on the **entry** (amount, schedule, category) applies to all boo
 Every now and then you enter your real **balance**. From that day on the integration adds or subtracts all upcoming bookings and shows the **expected balance** next to every day. At the top of the timeline there are two values:
 
 - **On …** (large number): with certain and likely bookings and budgets. This is the realistic expectation.
-- **certain entries only**: counts only what is sure to come. This is the cautious lower bound.
+- **cautious**: counts only *certain* income, but every certain and likely expense and budget. This is the cautious lower bound and never lies above the expected value.
 
 Uncertain bookings are shown but not included.
 

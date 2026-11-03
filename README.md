@@ -61,7 +61,7 @@ Was du am **Posten** änderst (Betrag, Turnus, Kategorie), gilt für alle Buchun
 Du trägst ab und zu deinen echten **Kontostand** ein. Von diesem Tag an zählt das Haushaltsbuch alle kommenden Buchungen dazu oder zieht sie ab und zeigt rechts neben jedem Tag den **erwarteten Kontostand**. Oben in der Zeitleiste stehen zwei Werte:
 
 - **Am …** (große Zahl): mit sicheren und wahrscheinlichen Buchungen und Budgets. Das ist die realistische Erwartung.
-- **nur sichere Posten**: zählt nur, was ganz sicher kommt. Das ist die vorsichtige Untergrenze.
+- **vorsichtig**: zählt nur *sichere* Einnahmen, aber alle sicheren und wahrscheinlichen Ausgaben und Budgets. Das ist die vorsichtige Untergrenze und liegt nie über dem erwarteten Wert.
 
 Unsichere Buchungen werden angezeigt, aber nicht eingerechnet.
 

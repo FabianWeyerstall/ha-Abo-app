@@ -605,7 +605,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${known && last && last.balance_likely !== null ? `<div>
         <div class="label">${tr("Am", "On")} ${fmtDate(last.date)}</div>
         <div class="big ${last.balance_likely < 0 ? "neg" : ""}">${this._money(last.balance_likely)}</div>
-        <div class="sub">${tr("nur sichere Posten", "certain entries only")}: ${this._money(last.balance_sure)}</div>
+        <div class="sub">${tr("vorsichtig", "cautious")}: ${this._money(last.balance_sure)}</div>
       </div>` : ""}
       <button class="secondary" data-action="edit-balance">${tr("Kontostand setzen", "Set balance")}</button>
     </div>`;
@@ -718,7 +718,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     ${!selected ? this._renderMonthList() : ""}
     ${selected ? `<div class="card"><div class="row-between"><h3>${this._dateLabel(this._selectedDay)}</h3><button class="secondary small" data-action="select-day" data-day="">${tr("ganzer Monat", "whole month")}</button></div>
       ${selected.entries.length ? selected.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("") : `<div class="empty">${tr("Nichts fällig.", "Nothing due.")}</div>`}
-      ${selected.balance_likely !== null ? `<p class="hint">${tr("Erwarteter Kontostand am Ende des Tages", "Expected balance at the end of the day")}: ${this._money(selected.balance_likely)} (${tr("nur sichere", "certain only")}: ${this._money(selected.balance_sure)})</p>` : ""}
+      ${selected.balance_likely !== null ? `<p class="hint">${tr("Erwarteter Kontostand am Ende des Tages", "Expected balance at the end of the day")}: ${this._money(selected.balance_likely)} (${tr("vorsichtig", "cautious")}: ${this._money(selected.balance_sure)})</p>` : ""}
     </div>` : ""}`;
   }
 
@@ -908,7 +908,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       `<div class="kpi"><div class="label">${label}</div><div class="kpi-value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     const kpis = `<div class="card"><div class="kpis">
       ${tile(this._isHousehold() ? tr("Haushaltskonto", "Household account") : tr("Kontostand", "Balance"), known ? this._money(b.balance) : "—", known ? `${tr("Stand", "As of")} ${fmtDate(b.balance_date)}` : tr("noch nicht gesetzt", "not set yet"))}
-      ${tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("nur sichere", "certain only")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "")}
+      ${tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("vorsichtig", "cautious")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "")}
       ${tile(tr("Einnahmen pro Monat", "Income per month"), this._money(monthlyIn), tr("regelmäßig, umgerechnet", "recurring, converted"), "pos")}
       ${tile(tr("Ausgaben pro Monat", "Expenses per month"), this._money(monthlyOut), tr("inklusive Budgets und Jahresposten", "incl. budgets and yearly entries"), "neg")}
       ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos")}
@@ -946,7 +946,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <h3>${tr("Kontostand-Verlauf", "Balance trend")}</h3>
       <div class="legend">
         <span><i class="swatch line s1"></i>${tr("erwartet", "expected")}</span>
-        <span><i class="swatch line s2 dashed"></i>${tr("nur sichere Posten", "certain entries only")}</span>
+        <span><i class="swatch line s2 dashed"></i>${tr("vorsichtig", "cautious")}</span>
       </div>
       <div class="trend" style="height:${H}px">
         <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${tr("Erwarteter Kontostand der nächsten 90 Tage", "Expected balance over the next 90 days")}">
@@ -961,7 +961,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         </svg>
         <div class="tip" hidden></div>
       </div>
-      <p class="hint">${tr(`In 90 Tagen erwartet: <b>${this._money(last.balance_likely)}</b>. Fahre über das Diagramm oder tippe darauf für einzelne Tage.`, `Expected in 90 days: <b>${this._money(last.balance_likely)}</b>. Hover or tap the chart for single days.`)}</p>
+      <p class="hint">${tr(`<b>Erwartet</b> rechnet alle sicheren und wahrscheinlichen Buchungen und Budgets ein. <b>Vorsichtig</b> zählt nur sichere Einnahmen, aber alle erwarteten Ausgaben, liegt also nie darüber. In 90 Tagen erwartet: <b>${this._money(last.balance_likely)}</b>. Fahre über das Diagramm oder tippe darauf für einzelne Tage.`, `<b>Expected</b> counts all certain and likely bookings and budgets. <b>Cautious</b> counts only certain income but every expected expense, so it is never higher. Expected in 90 days: <b>${this._money(last.balance_likely)}</b>. Hover or tap the chart for single days.`)}</p>
     </div>`;
   }
 
@@ -1003,7 +1003,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const moves = d.entries.filter((e) => e.status !== "skipped");
     tip.innerHTML = `<b>${this._dateLabel(d.date)}</b>
       <div class="tip-row"><i class="swatch line s1"></i>${tr("erwartet", "expected")}<span>${this._money(d.balance_likely)}</span></div>
-      <div class="tip-row"><i class="swatch line s2 dashed"></i>${tr("nur sichere", "certain only")}<span>${this._money(d.balance_sure)}</span></div>
+      <div class="tip-row"><i class="swatch line s2 dashed"></i>${tr("vorsichtig", "cautious")}<span>${this._money(d.balance_sure)}</span></div>
       ${moves.slice(0, 3).map((e) => `<div class="tip-row muted">${esc(e.name)}<span>${this._money(e.amount, true)}</span></div>`).join("")}${moves.length > 3 ? `<div class="tip-row muted">+${moves.length - 3}</div>` : ""}`;
     tip.hidden = false;
     const left = (cx / g.W) * rect.width;

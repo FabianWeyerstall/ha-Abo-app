@@ -503,6 +503,10 @@ def forecast(
     before it are assumed to be included already. Skipped bookings never count,
     uncertain ones are shown but left out of both balance lines. Budgets are
     spread over the days of each month and count as likely.
+
+    `balance_likely` is the realistic forecast (sure and likely bookings).
+    `balance_sure` is the cautious one: only sure income, but every sure or
+    likely expense and budget, so it never lies above the realistic line.
     """
     calc_start = min(start, balance_date + timedelta(days=1)) if balance_date else start
     all_occ = occurrences(items, calc_start, end)
@@ -518,6 +522,8 @@ def forecast(
         budget = budget_per_day(items, day)
         if balance is not None and balance_date is not None and day > balance_date:
             likely += budget
+            if budget < 0:
+                sure += budget
             for occ in entries:
                 if occ.status == STATUS_SKIPPED:
                     continue
@@ -526,6 +532,8 @@ def forecast(
                     likely += occ.amount
                 elif occ.certainty == LIKELY:
                     likely += occ.amount
+                    if occ.amount < 0:
+                        sure += occ.amount
         if day >= start:
             known = balance is not None and balance_date is not None and day >= balance_date
             days.append(
