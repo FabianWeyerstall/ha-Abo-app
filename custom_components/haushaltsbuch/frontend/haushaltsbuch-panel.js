@@ -73,6 +73,9 @@ function searchIcons(list, query, limit = 40) {
     .map(([name]) => `mdi:${name}`);
 }
 
+const SUGGEST_FIELDS = new Set(["icon", "category"]);
+const INCOGNITO_KEY = "haushaltsbuch-incognito";
+
 const CERTAINTY = {
   sicher: { label: "sicher", color: "var(--success-color, #43a047)" },
   wahrscheinlich: { label: "wahrscheinlich", color: "var(--warning-color, #ffa000)" },
@@ -211,6 +214,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     this._dialog = null;
     this._error = null;
     this._loaded = false;
+    try {
+      this._incognito = localStorage.getItem(INCOGNITO_KEY) === "1";
+    } catch (err) {
+      this._incognito = false;
+    }
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
     this.shadowRoot.addEventListener("submit", (ev) => this._onSubmit(ev));
@@ -220,33 +228,38 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._applySearch();
         return;
       }
-      if (ev.target.name !== "icon") return;
-      const preview = ev.target.closest("label")?.querySelector(".icon-preview");
-      if (preview) preview.innerHTML = this._icon(ev.target.value.trim(), 20);
-      this._suggestIcons(ev.target);
+      if (!SUGGEST_FIELDS.has(ev.target.name)) return;
+      if (ev.target.name === "icon") {
+        const preview = ev.target.closest("label")?.querySelector(".icon-preview");
+        if (preview) preview.innerHTML = this._icon(ev.target.value.trim(), 20);
+      }
+      this._suggest(ev.target);
     });
     this.shadowRoot.addEventListener("focusin", (ev) => {
-      if (ev.target.name === "icon") this._suggestIcons(ev.target);
+      if (SUGGEST_FIELDS.has(ev.target.name)) this._suggest(ev.target);
     });
     this.shadowRoot.addEventListener("focusout", (ev) => {
-      if (ev.target.name !== "icon") return;
-      const box = ev.target.closest(".icon-field")?.querySelector(".icon-suggest");
+      if (!SUGGEST_FIELDS.has(ev.target.name)) return;
+      const box = ev.target.closest(".suggest-field")?.querySelector(".suggest");
       if (box && !box.contains(ev.relatedTarget)) setTimeout(() => (box.hidden = true), 250);
     });
     this.shadowRoot.addEventListener("keydown", (ev) => {
-      if (ev.target.name !== "icon") return;
-      const box = ev.target.closest(".icon-field")?.querySelector(".icon-suggest");
+      if (!SUGGEST_FIELDS.has(ev.target.name)) return;
+      const box = ev.target.closest(".suggest-field")?.querySelector(".suggest");
       if (!box || box.hidden) return;
       if (ev.key === "Escape") {
         ev.preventDefault();
         ev.stopPropagation();
         box.hidden = true;
-      } else if (ev.key === "Enter") {
-        const first = box.querySelector("[data-icon]");
+      } else if (ev.key === "Enter" && ev.target.name === "icon") {
+        // Icons: Enter takes the best match. Categories: Enter keeps the typed text.
+        const first = box.querySelector("[data-value]");
         if (first) {
           ev.preventDefault();
-          this._pickIcon(ev.target, first.dataset.icon);
+          this._pickSuggestion(ev.target, first.dataset.value);
         }
+      } else if (ev.key === "Enter") {
+        box.hidden = true;
       }
     });
   }
@@ -325,8 +338,8 @@ class HaushaltsbuchPanel extends HTMLElement {
   _money(value, signed = false) {
     const currency = this._state?.currency || "EUR";
     const text = new Intl.NumberFormat("de-DE", { style: "currency", currency }).format(Math.abs(value));
-    if (!signed) return value < 0 ? `−${text}` : text;
-    return value < 0 ? `−${text}` : `+${text}`;
+    const sign = value < 0 ? "−" : signed ? "+" : "";
+    return `<span class="money">${sign}${text}</span>`;
   }
 
   _dateLabel(isoDate) {
@@ -397,11 +410,13 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _render() {
     const s = this._state;
+    this.classList.toggle("incognito", !!this._incognito);
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
       <div class="toolbar">
         <ha-menu-button></ha-menu-button>
         <div class="title">Haushaltsbuch</div>
+        ${s ? `<button class="incognito-toggle ${this._incognito ? "on" : ""}" data-action="incognito" title="${this._incognito ? "Beträge wieder zeigen" : "Inkognito: Beträge verbergen"}" aria-pressed="${this._incognito}">${this._icon(this._incognito ? "mdi:eye-off" : "mdi:eye", 22)}</button>` : ""}
         ${s ? this._renderScopeSelect() : ""}
       </div>
       ${s ? this._renderTabs() : ""}
@@ -822,9 +837,8 @@ class HaushaltsbuchPanel extends HTMLElement {
           <option value="income" ${item.direction === "income" ? "selected" : ""}>Einnahme</option>
         </select></label>
         <label>${preset === "budget" ? "Budget pro Monat" : (item.price_changes || []).length ? "Betrag am Anfang" : "Betrag"} (${esc(this._state.currency)})<input name="amount" type="number" step="0.01" min="0" required value="${item.amount ?? ""}" ${dis}></label>
-        <label>Kategorie<input name="category" list="categories" required value="${esc(item.category || "")}" ${dis}>
-          <datalist id="categories">${this._state.categories.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
-        <label class="icon-field">Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Suchen, z.B. netflix, auto, haus – oder Emoji" value="${esc(item.icon || "")}" ${dis}><div class="icon-suggest" hidden></div></label>
+        <label class="suggest-field">Kategorie<input name="category" autocomplete="off" required placeholder="Auswählen oder neue eingeben" value="${esc(item.category || "")}" ${dis}><div class="suggest" hidden></div></label>
+        <label class="suggest-field">Symbol <span class="icon-preview">${this._icon(item.icon, 20)}</span><input name="icon" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Suchen, z.B. netflix, auto, haus – oder Emoji" value="${esc(item.icon || "")}" ${dis}><div class="suggest" hidden></div></label>
         <label>Turnus<select name="preset" data-change="preset" ${dis}>
           ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p.label}</option>`).join("")}
         </select></label>
@@ -1175,45 +1189,73 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
-  async _suggestIcons(input) {
-    const box = input.closest(".icon-field")?.querySelector(".icon-suggest");
+  async _suggest(input) {
+    const box = input.closest(".suggest-field")?.querySelector(".suggest");
     if (!box) return;
     const query = input.value;
-    // Emoji or other non-MDI text: no suggestions.
-    if (!/^[a-z0-9:\- ]+$/i.test(query.trim())) {
-      box.hidden = true;
-      return;
+    let matches;
+    if (input.name === "icon") {
+      // Emoji or other non-MDI text: no suggestions.
+      if (!/^[a-z0-9:\- ]+$/i.test(query.trim())) {
+        box.hidden = true;
+        return;
+      }
+      const list = await loadIconList();
+      if (input.value !== query || this.shadowRoot.activeElement !== input) return;
+      matches = searchIcons(list, query).map((icon) => [icon, icon, icon.slice(4)]);
+    } else {
+      const q = query.trim().toLowerCase();
+      const iconOf = {};
+      for (const item of this._state?.items || []) {
+        if (item.category && item.icon && !iconOf[item.category]) iconOf[item.category] = item.icon;
+      }
+      matches = (this._state?.categories || [])
+        .filter((c) => c.toLowerCase().includes(q))
+        .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)) || a.localeCompare(b, "de"))
+        .map((c) => [c, iconOf[c] || "mdi:tag-outline", c]);
     }
-    const list = await loadIconList();
-    if (input.value !== query || this.shadowRoot.activeElement !== input) return;
-    const matches = searchIcons(list, query);
-    if (!matches.length || (matches.length === 1 && matches[0] === query.trim())) {
+    if (!matches.length || (matches.length === 1 && matches[0][0] === query.trim())) {
       box.hidden = true;
       return;
     }
     box.innerHTML = matches
-      .map((icon) => `<button type="button" data-action="pick-icon" data-icon="${esc(icon)}" title="${esc(icon)}">${this._icon(icon, 22)}<span>${esc(icon.slice(4))}</span></button>`)
+      .map(([value, icon, label]) => `<button type="button" data-action="pick-suggest" data-value="${esc(value)}" title="${esc(value)}">${this._icon(icon, 22)}<span>${esc(label)}</span></button>`)
       .join("");
     box.hidden = false;
   }
 
-  _pickIcon(input, icon) {
-    input.value = icon;
-    const field = input.closest(".icon-field");
+  _pickSuggestion(input, value) {
+    input.value = value;
+    const field = input.closest(".suggest-field");
     const preview = field?.querySelector(".icon-preview");
-    if (preview) preview.innerHTML = this._icon(icon, 20);
-    const box = field?.querySelector(".icon-suggest");
+    if (preview) preview.innerHTML = this._icon(value, 20);
+    const box = field?.querySelector(".suggest");
     if (box) box.hidden = true;
+  }
+
+  _toggleIncognito() {
+    this._incognito = !this._incognito;
+    try {
+      localStorage.setItem(INCOGNITO_KEY, this._incognito ? "1" : "0");
+    } catch (err) {
+      // Storage blocked: the mode still works until the page is reloaded.
+    }
+    this._render();
   }
 
   _onClick(ev) {
     const target = ev.target.closest("[data-action]");
     if (!target) return;
     const a = target.dataset.action;
-    if (a === "pick-icon") {
+    if (a === "pick-suggest") {
       ev.preventDefault();
-      const input = target.closest(".icon-field")?.querySelector('input[name="icon"]');
-      if (input) this._pickIcon(input, target.dataset.icon);
+      const input = target.closest(".suggest-field")?.querySelector("input");
+      if (input) this._pickSuggestion(input, target.dataset.value);
+      return;
+    }
+    if (a === "incognito") {
+      ev.preventDefault();
+      this._toggleIncognito();
       return;
     }
     if (a === "close-overlay") {
@@ -1496,12 +1538,17 @@ const STYLES = `
   .templates { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
   .template { display: flex; align-items: center; gap: 4px; background: var(--secondary-background-color); color: var(--primary-text-color); white-space: nowrap; font-size: 13px; padding: 6px 10px; border-radius: 16px; }
   .icon-preview { display: inline-flex; vertical-align: middle; color: var(--primary-color); }
-  .icon-field { position: relative; }
-  .icon-suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; max-height: 240px; overflow-y: auto; background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); padding: 4px; }
-  .icon-suggest[hidden] { display: none; }
-  .icon-suggest button { display: flex; align-items: center; gap: 10px; width: 100%; background: none; color: var(--primary-text-color); text-align: left; padding: 6px 8px; border-radius: 6px; font-size: 14px; font-weight: normal; }
-  .icon-suggest button:hover, .icon-suggest button:focus { background: var(--secondary-background-color); }
-  .icon-suggest ha-icon { color: var(--primary-color); flex-shrink: 0; }
+  .suggest-field { position: relative; }
+  .incognito-toggle { background: none; color: inherit; padding: 6px; border-radius: 50%; display: inline-flex; line-height: 0; }
+  .incognito-toggle.on { background: rgba(255,255,255,0.25); }
+  :host(.incognito) .money { filter: blur(7px); user-select: none; }
+  :host(.incognito) input[step="0.01"] { color: transparent; text-shadow: 0 0 10px var(--primary-text-color); }
+  :host(.incognito) .money { display: inline-block; }
+  .suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; max-height: 240px; overflow-y: auto; background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); padding: 4px; }
+  .suggest[hidden] { display: none; }
+  .suggest button { display: flex; align-items: center; gap: 10px; width: 100%; background: none; color: var(--primary-text-color); text-align: left; padding: 6px 8px; border-radius: 6px; font-size: 14px; font-weight: normal; }
+  .suggest button:hover, .suggest button:focus { background: var(--secondary-background-color); }
+  .suggest ha-icon { color: var(--primary-color); flex-shrink: 0; }
   .members { margin: 12px 0; }
   .end-date { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
   .dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }

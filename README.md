@@ -51,6 +51,8 @@ Tab **Posten** → **+ Neuer Posten**.
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
 5. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
 
+Bei der **Kategorie** öffnet sich beim Antippen eine Liste der vorhandenen Kategorien, Tippen filtert sie. Eine neue Kategorie gibst du einfach ein.
+
 Beim **Symbol** einfach lostippen: Eine Liste schlägt passende MDI-Symbole vor (englische Namen wie `netflix`, `car`, `home`, aber auch gängige deutsche Wörter wie „Auto“, „Strom“, „Geld“ oder „Versicherung“). Antippen oder Enter übernimmt den ersten Vorschlag. Alternativ geht ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
 
 ### Preisänderung eintragen
@@ -105,6 +107,10 @@ Tab **Haushalt** → **+ Haushalt anlegen**, Namen vergeben und andere HA-Nutzer
 ### 7. Sichern und umziehen
 
 Tab **Posten** → **Exportieren** speichert deine eigenen Posten als JSON-Datei (auf dem iPhone über das Teilen-Menü, „In Dateien sichern“). **Importieren** liest so eine Datei wieder ein, wahlweise zusätzlich zu den vorhandenen Posten oder als Ersatz. Importierte Posten sind zunächst privat.
+
+### Inkognito-Modus
+
+Das Auge oben in der Leiste verbirgt alle Beträge und Kontostände (sie werden unscharf), z.B. wenn du die App jemandem zeigen willst. Ein weiterer Tipp macht sie wieder sichtbar. Die Einstellung merkt sich das Gerät, bis du sie wieder ausschaltest.
 
 ## Installation über HACS
 
