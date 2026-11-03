@@ -208,8 +208,33 @@ def test_new_item_fields_are_validated():
 def test_user_settings_for_special_items():
     book = Book()
     book.set_user_settings("anna", {"special_min_months": 3, "special_min_amount": "50"})
-    assert book.user("anna")["settings"] == {"special_min_months": 3, "special_min_amount": 50.0}
+    assert book.user("anna")["settings"] == {
+        "special_min_months": 3, "special_min_amount": 50.0, "salary_item_id": None,
+    }
     with pytest.raises(ValidationError):
         book.set_user_settings("anna", {"special_min_months": 5})
     with pytest.raises(ValidationError):
         book.set_user_settings("anna", {"special_min_amount": "viel"})
+
+
+def test_salary_setting_and_weekday_schedule():
+    book = Book()
+    item_id = book.save_item(
+        "anna",
+        {**ITEM, "schedule": {"frequency": "monthly", "interval": 1, "weekday": 3, "week": -1}},
+    )
+    assert book.data["items"][item_id]["schedule"]["weekday"] == 3
+    assert book.data["items"][item_id]["schedule"]["week"] == -1
+    book.set_user_settings("anna", {"salary_item_id": item_id})
+    assert book.user("anna")["settings"]["salary_item_id"] == item_id
+    book.set_user_settings("anna", {"salary_item_id": "gone"})
+    assert book.user("anna")["settings"]["salary_item_id"] is None
+    for bad in ({"weekday": 7}, {"weekday": 1, "week": 5}, {"weekday": "do"}):
+        with pytest.raises(ValidationError):
+            book.save_item(
+                "anna", {**ITEM, "schedule": {"frequency": "monthly", "interval": 1, **bad}}
+            )
+    yearly = book.save_item(
+        "anna", {**ITEM, "schedule": {"frequency": "yearly", "interval": 1, "weekday": 3}}
+    )
+    assert "weekday" not in book.data["items"][yearly]["schedule"]

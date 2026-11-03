@@ -82,6 +82,8 @@ const setLanguage = (language) => {
 let DATE_LOCALE = "de-DE";
 const fmtDate = (isoDate, opts) => parseIso(isoDate).toLocaleDateString(DATE_LOCALE, opts);
 const monthName = (index, style = "long") => new Date(2020, index, 1).toLocaleDateString(LANG === "de" ? "de-DE" : DATE_LOCALE, { month: style }).replace(/\.$/, "");
+const weekdayLong = (index) => new Date(2024, 0, 1 + index).toLocaleDateString(LANG === "de" ? "de-DE" : DATE_LOCALE, { weekday: "long" });
+const WEEK_ORDINALS = [[1, "ersten", "first"], [2, "zweiten", "second"], [3, "dritten", "third"], [4, "vierten", "fourth"], [-1, "letzten", "last"]];
 const weekdayName = (index) => new Date(2024, 0, 1 + index).toLocaleDateString(LANG === "de" ? "de-DE" : DATE_LOCALE, { weekday: "short" }).replace(/\.$/, "");
 
 const SUGGEST_FIELDS = new Set(["icon", "category"]);
@@ -98,6 +100,7 @@ const FREQUENCY_PRESETS = [
   { key: "once", de: "einmalig", en: "once", frequency: "once", interval: 1 },
   { key: "weekly", de: "wöchentlich", en: "weekly", frequency: "weekly", interval: 1 },
   { key: "monthly", de: "monatlich", en: "monthly", frequency: "monthly", interval: 1 },
+  { key: "monthly_weekday", de: "monatlich am Wochentag (z.B. letzter Do)", en: "monthly on a weekday (e.g. last Thu)", frequency: "monthly", interval: 1 },
   { key: "quarterly", de: "vierteljährlich", en: "quarterly", frequency: "monthly", interval: 3 },
   { key: "halfyearly", de: "halbjährlich", en: "every six months", frequency: "monthly", interval: 6 },
   { key: "yearly", de: "jährlich", en: "yearly", frequency: "yearly", interval: 1 },
@@ -108,6 +111,7 @@ const FREQUENCY_PRESETS = [
 ];
 
 const NOTICE_UNITS = { days: ["Tage", "days"], weeks: ["Wochen", "weeks"], months: ["Monate", "months"] };
+const shortDay = (isoDate) => fmtDate(isoDate, { day: "2-digit", month: "2-digit" });
 const shortDate = (isoDate) => fmtDate(isoDate, { day: "2-digit", month: "2-digit", year: "2-digit" });
 
 const unitLabel = (n, unit) =>
@@ -154,6 +158,7 @@ const today = () => {
 
 function presetOf(schedule) {
   const { frequency, interval } = schedule || {};
+  if (frequency === "monthly" && schedule.weekday !== undefined && schedule.weekday !== null) return "monthly_weekday";
   if (frequency === "monthly") {
     if (interval === 1) return "monthly";
     if (interval === 3) return "quarterly";
@@ -172,7 +177,7 @@ function presetOf(schedule) {
 // the month view; everything else is a special item that stands out.
 function isRegular(item) {
   const preset = presetOf(item?.schedule);
-  return preset === "monthly" || preset === "weekly" || preset === "rolling" || preset === "budget";
+  return preset === "monthly" || preset === "monthly_weekday" || preset === "weekly" || preset === "rolling" || preset === "budget";
 }
 
 // Months between two bookings (Infinity for one-off items, 0 for frequent ones).
@@ -202,6 +207,10 @@ function scheduleLabel(item) {
     return tr(`gleitend, alle ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`, `rolling, every ${s.interval || 1} ${unitLabel(s.interval || 1, s.unit)}`);
   }
   if (preset === "budget") return tr("Budget pro Monat", "monthly budget");
+  if (preset === "monthly_weekday") {
+    const ord = WEEK_ORDINALS.find(([w]) => w === (s.week ?? -1)) || WEEK_ORDINALS[4];
+    return tr(`jeden ${ord[1]} ${weekdayLong(s.weekday)} im Monat`, `every ${ord[2]} ${weekdayLong(s.weekday)} of the month`);
+  }
   if (preset === "weekly" && s.interval > 1) return tr(`alle ${s.interval} Wochen`, `every ${s.interval} weeks`);
   if (preset === "yearly" && s.interval > 1) return tr(`alle ${s.interval} Jahre`, `every ${s.interval} years`);
   if (preset === "fixed_dates") return (s.dates || []).map((md) => fmtDate(`2020-${md}`, { day: "2-digit", month: "2-digit" })).join(" & ");
@@ -529,6 +538,12 @@ class HaushaltsbuchPanel extends HTMLElement {
     return Math.abs(amount ?? item.current_amount ?? item.amount) >= minAmount;
   }
 
+  // The income the user's months start with (payday to payday), if it is in view.
+  _salaryItem() {
+    const id = this._state.user.settings?.salary_item_id;
+    return id ? this._scopeItems().find((i) => i.id === id) || null : null;
+  }
+
   _scopeItems() {
     return this._state.items.filter((i) => (this._isHousehold() ? i.household_id === this._scope : i.owner === this._state.user.id));
   }
@@ -812,6 +827,7 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderMonths() {
     const rows = this._summary || [];
+    const salary = this._salaryItem();
     const itemsById = Object.fromEntries(this._state.items.map((i) => [i.id, i]));
     const max = Math.max(1, ...rows.map((r) => Math.max(r.income + r.uncertain_income, r.expense + r.uncertain_expense)));
     const barLine = (sure, unsure, cls) => {
@@ -821,6 +837,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     return `<div class="card">
       <h3>${tr("Monatsübersicht", "Monthly overview")}</h3>
       <p class="hint">${tr("Was in welchem Monat tatsächlich gebucht wird. Sichere und wahrscheinliche Posten als volle Balken, unsichere als heller Zusatz. Tippe auf einen Monat für die einzelnen Buchungen.", "What is actually booked in each month. Certain and likely entries as solid bars, uncertain ones as a lighter extra. Tap a month to see its bookings.")}</p>
+      ${salary ? `<p class="hint">${tr(`Deine Monate laufen von Gehalt zu Gehalt (<b>${esc(salary.name)}</b>). Ein Gehalt Ende Oktober zählt also zum November. Ändern kannst du das im Posten selbst.`, `Your months run from payday to payday (<b>${esc(salary.name)}</b>), so a salary at the end of October counts for November. You can change this in the entry itself.`)}</p>` : `<p class="hint">${tr("Tipp: Kommt dein Gehalt am Monatsende? Öffne den Gehalts-Posten und setze „Mein Monat beginnt mit dieser Einnahme“. Dann laufen die Monate von Gehalt zu Gehalt.", "Tip: Is your salary paid at the end of the month? Open the salary entry and tick “My month starts with this income”. Months then run from payday to payday.")}</p>`}
       ${this._renderSpecialSettings()}
       <div class="months">
         ${rows
@@ -834,7 +851,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             const entryRow = (e) => `<div class="pending-date">${this._dateLabel(e.date)}</div>${this._renderEntry({ owner_name: "", ...e }, { special: this._isSpecial(itemsById[e.item_id], e.amount) && itemsById[e.item_id] })}`;
             return `<div class="month-block">
               <button class="month-row ${open ? "open" : ""}" data-action="toggle-month" data-month="${r.month}" aria-expanded="${open}">
-                <div class="month-name">${monthName(m - 1).slice(0, 3)} ${String(y).slice(2)}</div>
+                <div class="month-name">${monthName(m - 1).slice(0, 3)} ${String(y).slice(2)}${salary && r.start ? `<small title="${shortDay(r.start)}–${shortDay(r.end)}">${tr("ab", "from")} ${shortDay(r.start)}</small>` : ""}</div>
                 <div class="bars">
                   ${barLine(r.income, r.uncertain_income, "pos-bg")}
                   ${barLine(r.expense, r.uncertain_expense, "neg-bg")}
@@ -924,12 +941,18 @@ class HaushaltsbuchPanel extends HTMLElement {
     const free = monthlyIn - monthlyOut;
     const monthEnd = iso(new Date(today().getFullYear(), today().getMonth() + 1, 0));
     const endDay = [...days].reverse().find((d) => d.date <= monthEnd && d.balance_likely !== null);
+    const salary = this._salaryItem();
+    const todayIso = iso(today());
+    const payIndex = salary ? days.findIndex((d) => d.date > todayIso && d.entries.some((e) => e.item_id === salary.id && e.status !== "skipped")) : -1;
+    const beforePay = payIndex > 0 && days[payIndex - 1].balance_likely !== null ? days[payIndex - 1] : null;
     const lowest = days.filter((d) => d.balance_likely !== null).reduce((m, d) => (m && m.balance_likely <= d.balance_likely ? m : d), null);
     const tile = (label, value, sub = "", cls = "", help = "") =>
       `<div class="kpi"><div class="label">${label}${help ? this._help(help) : ""}</div><div class="kpi-value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     const kpis = `<div class="card"><div class="kpis">
       ${tile(this._isHousehold() ? tr("Haushaltskonto", "Household account") : tr("Kontostand", "Balance"), known ? this._money(b.balance) : "—", known ? `${tr("Stand", "As of")} ${fmtDate(b.balance_date)}` : tr("noch nicht gesetzt", "not set yet"))}
-      ${tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("vorsichtig", "cautious")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "", tr("Kontostand am letzten Tag dieses Monats, wenn alles wie erwartet kommt.", "Balance on the last day of this month if everything comes as expected."))}
+      ${salary
+        ? tile(tr("Vor dem nächsten Gehalt", "Before next payday"), beforePay ? this._money(beforePay.balance_likely) : "—", beforePay ? `${tr("am", "on")} ${fmtDate(beforePay.date)} · ${tr("vorsichtig", "cautious")}: ${this._money(beforePay.balance_sure)}` : "", beforePay && beforePay.balance_likely < 0 ? "neg" : "", tr(`Was am Tag vor dem nächsten Gehalt (${salary.name}) übrig ist, wenn alles wie erwartet kommt. Dann sind alle Abbuchungen des Monats schon runter.`, `What is left the day before the next salary (${salary.name}) if everything comes as expected. By then all of the month's debits have gone out.`))
+        : tile(tr("Erwartet zum Monatsende", "Expected at month end"), endDay ? this._money(endDay.balance_likely) : "—", endDay ? `${tr("vorsichtig", "cautious")}: ${this._money(endDay.balance_sure)}` : "", endDay && endDay.balance_likely < 0 ? "neg" : "", tr("Kontostand am letzten Tag dieses Monats, wenn alles wie erwartet kommt. Kommt dein Gehalt am Monatsende, markiere es im Posten als „Mein Monat beginnt mit dieser Einnahme“, dann steht hier der Stand vor dem nächsten Gehalt.", "Balance on the last day of this month if everything comes as expected. If your salary arrives at the month end, mark it as “My month starts with this income” to see the balance before the next payday here."))}
       ${tile(tr("Einnahmen pro Monat", "Income per month"), this._money(monthlyIn), tr("regelmäßig, umgerechnet", "recurring, converted"), "pos", tr("Alle wiederkehrenden Einnahmen auf einen Monat umgerechnet. Einmalige wie ein Bonus zählen nicht.", "All recurring income converted to one month. One-offs such as a bonus are not included."))}
       ${tile(tr("Ausgaben pro Monat", "Expenses per month"), this._money(monthlyOut), tr("inklusive Budgets und Jahresposten", "incl. budgets and yearly entries"), "neg", tr("Alle wiederkehrenden Ausgaben auf einen Monat umgerechnet, auch jährliche (geteilt durch 12) und Budgets.", "All recurring expenses converted to one month, yearly ones divided by 12, budgets included."))}
       ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos", tr("Einnahmen pro Monat minus Ausgaben pro Monat. So viel kannst du im Schnitt sparen.", "Income per month minus expenses per month: what you can save on average."))}
@@ -1267,7 +1290,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${templates}
       <div class="grid">
         <label class="full">${tr("Name", "Name")}<input name="name" required maxlength="100" value="${esc(item.name)}" ${dis}></label>
-        <label>${tr("Art", "Type")}<select name="direction" ${dis}>
+        <label>${tr("Art", "Type")}<select name="direction" data-change="direction" ${dis}>
           <option value="expense" ${item.direction !== "income" ? "selected" : ""}>${tr("Ausgabe", "Expense")}</option>
           <option value="income" ${item.direction === "income" ? "selected" : ""}>${tr("Einnahme", "Income")}</option>
         </select></label>
@@ -1277,6 +1300,11 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label>${tr("Turnus", "Repeats")}<select name="preset" data-change="preset" ${dis}>
           ${FREQUENCY_PRESETS.map((p) => `<option value="${p.key}" ${p.key === preset ? "selected" : ""}>${p[LANG]}</option>`).join("")}
         </select></label>
+        ${preset === "monthly_weekday" ? `<label>${tr("Welcher Tag?", "Which day?")}<span class="inline-fields"><select name="week" ${dis}>
+          ${WEEK_ORDINALS.map(([w, de, en]) => `<option value="${w}" ${w === (item.schedule?.week ?? -1) ? "selected" : ""}>${tr(de.replace(/n$/, "r"), en)}</option>`).join("")}
+        </select><select name="weekday" ${dis}>
+          ${[0, 1, 2, 3, 4, 5, 6].map((w) => `<option value="${w}" ${w === (item.schedule?.weekday ?? 3) ? "selected" : ""}>${weekdayLong(w)}</option>`).join("")}
+        </select></span></label>` : ""}
         ${preset === "every_n_months" ? `<label>${tr("Alle wie viele Monate?", "Every how many months?")}<input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 2}" ${dis}></label>` : ""}
         ${preset === "rolling" ? `<label>${tr("Nächster Termin nach", "Next date after")}<span class="inline-fields"><input name="interval" type="number" min="1" max="120" value="${item.schedule?.interval || 1}" ${dis}><select name="unit" ${dis}>
           <option value="months" ${item.schedule?.unit !== "weeks" ? "selected" : ""}>${tr("Monat(en)", "month(s)")}</option>
@@ -1287,11 +1315,12 @@ class HaushaltsbuchPanel extends HTMLElement {
         ${preset === "weekly" ? `<label>${tr("Alle wie viele Wochen?", "Every how many weeks?")}<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
         ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird gleichmäßig über die Tage des Monats vom erwarteten Kontostand abgezogen und erscheint in der Monatsübersicht, aber nicht als einzelne Buchung.", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance evenly across the days of the month and shows up in the monthly overview, but not as single bookings.")}</p>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">${tr("Termine im Jahr (TT.MM., durch Komma getrennt)", "Dates each year (DD.MM., comma separated)")}<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
-        <label>${preset === "once" ? tr("Datum", "Date") : preset === "fixed_dates" || preset === "budget" ? tr("Gültig ab", "Valid from") : preset === "rolling" ? tr("Erster Termin", "First date") : tr("Erste Fälligkeit", "First due date")}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
+        <label>${preset === "once" ? tr("Datum", "Date") : preset === "fixed_dates" || preset === "budget" || preset === "monthly_weekday" ? tr("Gültig ab", "Valid from") : preset === "rolling" ? tr("Erster Termin", "First date") : tr("Erste Fälligkeit", "First due date")}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
           <label class="check"><input type="checkbox" name="has_end" data-change="has_end" ${hasEnd ? "checked" : ""} ${dis}> ${tr("Enddatum festlegen", "Set an end date")}</label>
           ${hasEnd ? `<input name="end_date" type="date" aria-label="${tr("Enddatum", "End date")}" required value="${esc(item.end_date || "")}" ${dis}>` : ""}
         </div>` : ""}
+        ${item.direction === "income" && preset !== "once" && preset !== "budget" ? `<label class="check full"><input type="checkbox" name="salary_cycle" ${dis} ${d.salaryCycle ?? (item.id && item.id === this._state.user.settings?.salary_item_id) ? "checked" : ""}> ${tr("Mein Monat beginnt mit dieser Einnahme (Gehalt)", "My month starts with this income (salary)")}${this._help(tr("Dann laufen Monatsübersicht und Auswertungen von Gehalt zu Gehalt statt vom 1. bis zum Monatsende. Ein Gehalt nach dem 15. zählt zum Folgemonat, weil es dessen Abbuchungen bezahlt.", "The monthly overview and the figures then run from payday to payday instead of the 1st to the month end. A salary paid after the 15th counts for the next month, because it pays that month's bills."))}</label>` : ""}
       </div>
       ${preset !== "once" ? this._renderPriceChanges(item, dis) : ""}
       ${preset !== "once" && preset !== "budget" ? this._renderContractFields(d, dis) : ""}
@@ -1515,8 +1544,14 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _readItemForm(form) {
     const f = new FormData(form);
+    const salaryBox = form.querySelector('[name="salary_cycle"]');
+    if (salaryBox) this._dialog.salaryCycle = salaryBox.checked;
     const preset = FREQUENCY_PRESETS.find((p) => p.key === f.get("preset"));
     const schedule = { frequency: preset.frequency, interval: preset.interval || Number(f.get("interval")) || 1, dates: [] };
+    if (preset.key === "monthly_weekday") {
+      schedule.weekday = Number(f.get("weekday") ?? 3);
+      schedule.week = Number(f.get("week") ?? -1);
+    }
     if (preset.key === "rolling") {
       schedule.unit = f.get("unit") || "months";
       schedule.learn = f.get("learn") === "on";
@@ -1563,8 +1598,16 @@ class HaushaltsbuchPanel extends HTMLElement {
     const kind = form.dataset.form;
     if (kind === "item") {
       const item = this._readItemForm(form);
+      const salaryBox = form.querySelector('[name="salary_cycle"]');
       const { editable, owner_name, owner, current_amount, contract_info, learned_days, ...payload } = item;
-      this._run(() => this._ws("item/save", { item: payload }));
+      this._run(async () => {
+        const saved = editable === false ? { id: item.id } : await this._ws("item/save", { item: payload });
+        const st = this._state.user.settings || {};
+        const isSalary = st.salary_item_id && st.salary_item_id === saved.id;
+        const wantSalary = salaryBox?.checked && item.direction === "income";
+        if (wantSalary && !isSalary) await this._ws("settings", { settings: { special_min_months: 2, special_min_amount: 0, ...st, salary_item_id: saved.id } });
+        if (!wantSalary && isSalary) await this._ws("settings", { settings: { special_min_months: 2, special_min_amount: 0, ...st, salary_item_id: null } });
+      });
     } else if (kind === "balance") {
       const f = new FormData(form);
       this._run(() => this._ws("balance", { scope: this._scope, balance: this._parsedAmount(f.get("balance"), NaN), balance_date: f.get("balance_date") }));
@@ -1614,6 +1657,10 @@ class HaushaltsbuchPanel extends HTMLElement {
       const form = el.closest("form");
       this._dialog.item = this._readItemForm(form);
       this._dialog.hasEnd = el.checked;
+      this._render();
+    } else if (kind === "direction") {
+      const form = el.closest("form");
+      this._dialog.item = this._readItemForm(form);
       this._render();
     } else if (kind === "preset") {
       const form = el.closest("form");
@@ -2017,6 +2064,7 @@ const STYLES = `
   .month-row:hover, .month-row.open { background: var(--secondary-background-color); }
   .month-entries { padding: 0 4px 8px; }
   .month-name { font-size: 13px; }
+  .month-name small { display: block; font-size: 10px; color: var(--secondary-text-color); white-space: nowrap; }
   .bar-line { display: flex; align-items: center; height: 16px; gap: 0; }
   .bar { height: 10px; display: inline-block; }
   .bar:first-child { border-radius: 4px 0 0 4px; }

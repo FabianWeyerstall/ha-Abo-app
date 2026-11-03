@@ -99,9 +99,13 @@ class Book:
             raise ValidationError("settings") from err
         if min_months not in SPECIAL_MIN_MONTHS:
             raise ValidationError("special_min_months")
+        salary = settings.get("salary_item_id") or None
+        if salary not in self.data["items"]:
+            salary = None  # unknown or deleted item: back to calendar months
         self.user(user_id)["settings"] = {
             "special_min_months": min_months,
             "special_min_amount": min_amount,
+            "salary_item_id": salary,
         }
 
     def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:
@@ -456,6 +460,17 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
     unit = schedule.get("unit") or UNIT_MONTHS
     if unit not in (UNIT_MONTHS, UNIT_WEEKS):
         raise ValidationError("unit")
+    weekday = schedule.get("weekday")
+    week = schedule.get("week")
+    if frequency == "monthly" and weekday is not None:
+        try:
+            weekday, week = int(weekday), int(week if week is not None else -1)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("weekday") from err
+        if not 0 <= weekday <= 6 or week not in (1, 2, 3, 4, -1):
+            raise ValidationError("weekday")
+    else:
+        weekday = week = None
     dates: list[str] = []
     if frequency == "fixed_dates":
         for month_day in schedule.get("dates") or []:
@@ -526,6 +541,7 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
             "frequency": frequency,
             "interval": interval,
             "dates": sorted(set(dates)),
+            **({"weekday": weekday, "week": week} if weekday is not None else {}),
             **(
                 {"unit": unit, "learn": schedule.get("learn") is not False}
                 if frequency == "rolling"

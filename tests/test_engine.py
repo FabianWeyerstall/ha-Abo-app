@@ -15,6 +15,8 @@ from custom_components.haushaltsbuch.engine import (
     easter_sunday,
     forecast,
     month_summaries,
+    nth_weekday,
+    salary_periods,
     nominal_dates,
     occurrences,
     shift_to_business_day,
@@ -296,3 +298,42 @@ def test_cautious_line_leaves_out_likely_income():
     assert days[-1].balance_likely == 2400
     assert days[-1].balance_sure == 400
     assert all(d.balance_sure <= d.balance_likely for d in days)
+
+
+def test_last_thursday_of_month():
+    assert nth_weekday(2026, 11, 3, -1) == date(2026, 11, 26)
+    assert nth_weekday(2026, 12, 3, -1) == date(2026, 12, 31)
+    assert nth_weekday(2026, 11, 0, 1) == date(2026, 11, 2)
+    salary = item(
+        direction="income",
+        start_date="2026-10-01",
+        schedule={"frequency": "monthly", "interval": 1, "weekday": 3, "week": -1},
+    )
+    assert list(nominal_dates(salary, date(2027, 1, 31))) == [
+        date(2026, 10, 29), date(2026, 11, 26), date(2026, 12, 31), date(2027, 1, 28),
+    ]
+
+
+def test_months_run_from_payday_to_payday():
+    salary = item(
+        id="gehalt",
+        direction="income",
+        amount=2700.0,
+        start_date="2026-01-01",
+        weekend_shift="previous",
+        schedule={"frequency": "monthly", "interval": 1, "weekday": 3, "week": -1},
+    )
+    rent = item(id="miete", amount=900.0, start_date="2026-01-01",
+                schedule={"frequency": "monthly", "interval": 1})
+    periods = salary_periods([salary, rent], "gehalt", date(2026, 11, 3), 2)
+    # Paid on 29 Oct, so the current month is November until the next payday.
+    assert periods[0] == (date(2026, 11, 1), date(2026, 10, 29), date(2026, 11, 25))
+    assert periods[1] == (date(2026, 12, 1), date(2026, 11, 26), date(2026, 12, 30))
+    rows = month_summaries([salary, rent], date(2026, 11, 3), 2, periods)
+    assert rows[0]["month"] == "2026-11"
+    assert rows[0]["income"] == 2700.0 and rows[0]["expense"] == 900.0
+    assert rows[0]["start"] == "2026-10-29"
+    # After payday on 26 Nov the current month is already December.
+    assert salary_periods([salary], "gehalt", date(2026, 11, 27), 1)[0][0] == date(2026, 12, 1)
+    # Unknown salary item: calendar months.
+    assert salary_periods([rent], "gehalt", date(2026, 11, 3), 1) is None

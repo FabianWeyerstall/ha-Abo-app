@@ -25,7 +25,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 
 - **Zeitleiste** der nächsten 7, 30 oder 90 Tage mit erwartetem Kontostand pro Tag
 - **Kalender** als Monatsansicht mit allen Fälligkeiten
-- **Posten** mit Name, Betrag, Kategorie, Symbol und Turnus: einmalig, wöchentlich, monatlich, vierteljährlich, halbjährlich, jährlich, alle X Monate, feste Termine im Jahr oder **gleitend** (der nächste Termin richtet sich nach dem letzten, z.B. Friseur)
+- **Posten** mit Name, Betrag, Kategorie, Symbol und Turnus: einmalig, wöchentlich, monatlich, **monatlich am Wochentag** (z.B. letzter Donnerstag), vierteljährlich, halbjährlich, jährlich, alle X Monate, feste Termine im Jahr oder **gleitend** (der nächste Termin richtet sich nach dem letzten, z.B. Friseur)
 - **Sicherheitsstufe** pro Buchung: *sicher*, *wahrscheinlich* oder *unsicher*. Sie ergibt sich aus Schwankung von Betrag und Datum und daraus, ob die letzten Buchungen pünktlich bestätigt wurden. Pro Posten auch fest einstellbar.
 - **Preisänderungen**: neuer Betrag ab einem Datum, frühere Buchungen behalten den alten Betrag
 - **Verträge**: Laufzeit, Kündigungsfrist und automatische Verlängerung. Die Zeitleiste zeigt rechtzeitig, bis wann du kündigen musst.
@@ -106,12 +106,14 @@ Tab **Posten** → **+ Neuer Posten**.
 2. **Betrag** und **Erste Fälligkeit** (die nächste Abbuchung) eintragen.
 3. Den **Turnus** prüfen:
    - *monatlich, vierteljährlich, halbjährlich, jährlich, alle X Monate*: fester Kalendertag, z.B. GEZ am 15. jedes dritten Monats
+   - *monatlich am Wochentag*: z.B. „letzter Donnerstag“ oder „erster Montag“, für ein Gehalt, das immer an einem bestimmten Wochentag kommt
    - *feste Termine im Jahr*: mehrere Daten pro Jahr, z.B. Räderwechsel im April und Oktober
    - *gleitend*: der nächste Termin richtet sich nach dem letzten, z.B. Friseur oder Tanken
    - *einmalig*: z.B. Bonus oder eine Rechnung
    - *Budget pro Monat*: für Ausgaben ohne feste Termine, z.B. Lebensmittel. Keine einzelnen Buchungen, das Budget wird gleichmäßig über den Monat verteilt.
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
-5. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
+5. Bei einer Einnahme wie dem Gehalt: Häkchen **„Mein Monat beginnt mit dieser Einnahme“**, wenn das Gehalt am Monatsende kommt und die Abbuchungen des Folgemonats bezahlt. Dann laufen Monatsübersicht und Übersicht von Gehalt zu Gehalt (siehe [Monate](#6-monate)).
+6. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
 
 Bei der **Kategorie** öffnet sich beim Antippen eine Liste der vorhandenen Kategorien, Tippen filtert sie. Eine neue Kategorie gibst du einfach ein.
 
@@ -212,13 +214,15 @@ Für die nächsten 12 Monate stehen hier Einnahmen (grün) und Ausgaben (rot) al
 
 **Sonderposten** sind gelb markiert und stehen als Etiketten unter dem Monat. Oben stellst du ein, was als Sonderposten zählt: standardmäßig alles, was nicht jeden Monat kommt. Du kannst aber auch z.B. „erst ab vierteljährlich“ wählen und einen Mindestbetrag setzen. Die Einstellung gilt für Monate, Zeitleiste und Kalender.
 
+**Gehaltsmonat:** Kommt dein Gehalt am Monatsende (z.B. am letzten Donnerstag), setze im Gehalts-Posten das Häkchen „Mein Monat beginnt mit dieser Einnahme“. Dann läuft jeder Monat von Gehalt zu Gehalt, und unter dem Monatsnamen steht, ab wann er zählt. Ein Gehalt nach dem 15. gehört zum Folgemonat, ein Gehalt Ende Oktober also zum November, zusammen mit den Abbuchungen, die es bezahlt. Der Kalender bleibt beim normalen Kalendermonat.
+
 Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welche **Kategorien** am meisten kosten: groß der Durchschnitt pro Monat, klein darunter die Summe der nächsten 12 Monate. Ein Budget von 500 € pro Monat steht dort also als 500 € und klein als rund 6.000 €.
 
 ### 7. Übersicht
 
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/13-uebersicht.png" alt="Übersicht" width="260">
 
-Das Dashboard auf einen Blick: Kontostand, erwarteter Stand zum Monatsende, Einnahmen und Ausgaben pro Monat, was pro Monat übrig bleibt und der tiefste Stand der nächsten 90 Tage. Darunter:
+Das Dashboard auf einen Blick: Kontostand, erwarteter Stand zum Monatsende (mit Gehaltsmonat: **vor dem nächsten Gehalt**, wenn alle Abbuchungen schon runter sind), Einnahmen und Ausgaben pro Monat, was pro Monat übrig bleibt und der tiefste Stand der nächsten 90 Tage. Darunter:
 
 - **Wohin das meiste Geld fließt:** Kreisdiagramm der Ausgaben nach Kategorie (die fünf größten, der Rest unter „Weitere“).
 - **Fixkosten, Sonderposten und Budgets** im Verhältnis, pro Monat gemittelt.

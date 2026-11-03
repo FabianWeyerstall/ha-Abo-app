@@ -197,6 +197,17 @@ def _fixed_date(year: int, month_day: str) -> date:
     return date(year, month, min(day, monthrange(year, month)[1]))
 
 
+def nth_weekday(year: int, month: int, weekday: int, week: int) -> date:
+    """The `week`-th `weekday` (0 = Monday) of a month; week -1 is the last one."""
+    last_day = monthrange(year, month)[1]
+    if week == -1:
+        last = date(year, month, last_day)
+        return last - timedelta(days=(last.weekday() - weekday) % 7)
+    first = date(year, month, 1)
+    day = 1 + (weekday - first.weekday()) % 7 + 7 * (week - 1)
+    return date(year, month, min(day, last_day))
+
+
 def nominal_dates(item: dict[str, Any], until: date) -> Iterable[date]:
     """Yield the unshifted due dates of an item up to and including `until`."""
     schedule = item.get("schedule") or {}
@@ -219,6 +230,20 @@ def nominal_dates(item: dict[str, Any], until: date) -> Iterable[date]:
             yield current
             current += timedelta(weeks=interval)
         return
+
+    weekday = schedule.get("weekday")
+    if freq == FREQ_MONTHLY and weekday is not None:
+        # e.g. "last Thursday of the month"
+        week = int(schedule.get("week") or -1)
+        k = 0
+        while True:
+            month_start = _add_months(start.replace(day=1), k * interval, 1)
+            if month_start > limit:
+                return
+            current = nth_weekday(month_start.year, month_start.month, int(weekday), week)
+            if start <= current <= limit:
+                yield current
+            k += 1
 
     if freq in (FREQ_MONTHLY, FREQ_YEARLY):
         step = interval if freq == FREQ_MONTHLY else interval * 12
@@ -549,16 +574,82 @@ def forecast(
     return days
 
 
-def month_summaries(
-    items: list[dict[str, Any]], first_month: date, months: int
-) -> list[dict[str, Any]]:
-    """Income, expenses and net per month, split by certainty."""
-    result = []
+def _cycle_label(day: date) -> date:
+    """The month a salary paid on `day` is meant for.
+
+    Paid in the second half of a month it pays the next month's bills.
+    """
+    first = day.replace(day=1)
+    return _add_months(first, 1, 1) if day.day > 15 else first
+
+
+def salary_periods(
+    items: list[dict[str, Any]], salary_id: str | None, today: date, months: int
+) -> list[tuple[date, date, date]] | None:
+    """(month, first day, last day) of each month running from payday to payday.
+
+    Returns None when the salary item is not among `items`, so the caller falls
+    back to calendar months. A month without a salary payment starts on its
+    first calendar day.
+    """
+    item = next((i for i in items if salary_id and i.get("id") == salary_id), None)
+    if item is None:
+        return None
+    first = today.replace(day=1)
+    boundaries: dict[date, date] = {}
+    for occ in occurrences(
+        [item], _add_months(first, -2, 1), _add_months(first, months + 3, 1)
+    ):
+        if occ.status == STATUS_SKIPPED:
+            continue
+        label = _cycle_label(occ.date)
+        if label not in boundaries or occ.date < boundaries[label]:
+            boundaries[label] = occ.date
+
+    def start_of(label: date) -> date:
+        return boundaries.get(label, label)
+
+    label = first
+    if today >= start_of(_add_months(first, 1, 1)):
+        label = _add_months(first, 1, 1)
+    elif today < start_of(first):
+        label = _add_months(first, -1, 1)
+    periods = []
     for index in range(months):
-        month_start = _add_months(first_month.replace(day=1), index, 1)
-        month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+        current = _add_months(label, index, 1)
+        start = start_of(current)
+        end = start_of(_add_months(current, 1, 1)) - timedelta(days=1)
+        if end < start:
+            end = start
+        periods.append((current, start, end))
+    return periods
+
+
+def month_summaries(
+    items: list[dict[str, Any]],
+    first_month: date,
+    months: int,
+    periods: list[tuple[date, date, date]] | None = None,
+) -> list[dict[str, Any]]:
+    """Income, expenses and net per month, split by certainty.
+
+    Without `periods` the months are calendar months from `first_month` on;
+    with them (see `salary_periods`) each month runs from payday to payday.
+    """
+    if periods is None:
+        periods = []
+        for index in range(months):
+            month_start = _add_months(first_month.replace(day=1), index, 1)
+            month_end = month_start.replace(
+                day=monthrange(month_start.year, month_start.month)[1]
+            )
+            periods.append((month_start, month_start, month_end))
+    result = []
+    for label, month_start, month_end in periods:
         summary = {
-            "month": month_start.isoformat()[:7],
+            "month": label.isoformat()[:7],
+            "start": month_start.isoformat(),
+            "end": month_end.isoformat(),
             "income": 0.0,
             "expense": 0.0,
             "uncertain_income": 0.0,
