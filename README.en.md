@@ -48,7 +48,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 2. Add `https://github.com/FabianWeyerstall/ha-haushaltsbuch` with type **Integration**
 3. Install **Haushaltsbuch** (Household Budget) and restart Home Assistant
 4. **Settings → Devices & services → Add integration → Haushaltsbuch**
-5. **Household Budget** appears in the sidebar, also in the Home Assistant companion app
+5. **Haushaltsbuch** appears in the sidebar (the sidebar title is the same for all users), also in the Home Assistant companion app
 
 ## How it works
 

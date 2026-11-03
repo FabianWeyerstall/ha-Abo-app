@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -11,7 +11,6 @@ PANEL_URL_PATH = "haushaltsbuch"
 PANEL_WEBCOMPONENT = "haushaltsbuch-panel"
 PANEL_STATIC_URL = "/haushaltsbuch_static"
 PANEL_TITLE = "Haushaltsbuch"
-PANEL_TITLE_EN = "Household Budget"
 PANEL_ICON = "mdi:cash-clock"
 
 SIGNAL_UPDATED = f"{DOMAIN}_updated"

@@ -24,7 +24,6 @@ from .const import (
     PANEL_ICON,
     PANEL_STATIC_URL,
     PANEL_TITLE,
-    PANEL_TITLE_EN,
     PANEL_URL_PATH,
     PANEL_WEBCOMPONENT,
     REMINDER_HOUR,
@@ -132,9 +131,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             frontend_url_path=PANEL_URL_PATH,
             webcomponent_name=PANEL_WEBCOMPONENT,
-            sidebar_title=PANEL_TITLE
-            if (hass.config.language or "de").startswith("de")
-            else PANEL_TITLE_EN,
+            # One title for all users: HA can't localise a custom panel's
+            # sidebar title per user, so the product name stays as it is.
+            sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
             module_url=f"{PANEL_STATIC_URL}/haushaltsbuch-panel.js?v={VERSION}",
             require_admin=False,
