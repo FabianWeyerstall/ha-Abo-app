@@ -27,7 +27,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Wochenenden und Bankfeiertage**: Buchungen rutschen auf den nächsten Bankarbeitstag, das Gehalt auf den vorherigen (pro Posten einstellbar)
 - **Monatsübersicht** mit Einnahmen, Ausgaben und Saldo für 12 Monate. **Sonderposten** (alles, was nicht jeden Monat kommt, z.B. GEZ, Versicherungen, Bonus) sind pro Monat und in Zeitleiste und Kalender gelb markiert. Darunter die **Ausgaben nach Kategorie** für die nächsten 12 Monate.
 - **Suche** in den Posten und **alle offenen Buchungen auf einmal bestätigen**
-- **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Netflix, Prime, Disney+, Gehalt, Tanken, Räderwechsel …)
+- **Vorlagen** für typische Posten (GEZ, Strom, Internet, Handy, Versicherungen, Kfz-Steuer, Streaming-Abos, Gehalt, Tanken, Räderwechsel …)
 - **Export und Import** der eigenen Posten als JSON-Datei, z.B. als Sicherung oder zum Umzug auf eine andere HA-Instanz. Beim Import wählbar: hinzufügen (Doppelte werden übersprungen) oder ersetzen
 
 ## Installation über HACS
@@ -42,7 +42,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 
 ### Posten und Buchungen
 
-Ein **Posten** ist die Regel, z.B. „Netflix, 13,99 €, monatlich ab dem 5.“. Aus jedem Posten rechnet das Haushaltsbuch die einzelnen **Buchungen** aus, also jede einzelne Abbuchung oder Einnahme an ihrem Tag. Du pflegst nur die Posten. Die Buchungen entstehen von selbst, und du bestätigst sie, wenn sie auf dem Konto angekommen sind.
+Ein **Posten** ist die Regel, z.B. „Internet, 39,99 €, monatlich ab dem 5.“. Aus jedem Posten rechnet das Haushaltsbuch die einzelnen **Buchungen** aus, also jede einzelne Abbuchung oder Einnahme an ihrem Tag. Du pflegst nur die Posten. Die Buchungen entstehen von selbst, und du bestätigst sie, wenn sie auf dem Konto angekommen sind.
 
 Was du am **Posten** änderst (Betrag, Turnus, Kategorie), gilt für alle Buchungen. Was du an einer **Buchung** änderst (gebucht, ausgefallen, fester Termin), gilt nur für diese eine.
 
@@ -94,7 +94,7 @@ Tab **Posten** → **+ Neuer Posten**.
 
 Tab **Posten** → **+ Neuer Posten**.
 
-1. Oben eine **Vorlage** antippen (z.B. GEZ, Gehalt, Netflix). Sie füllt Name, Kategorie, Symbol und Turnus aus.
+1. Oben eine **Vorlage** antippen (z.B. GEZ, Gehalt, Internet). Sie füllt Name, Kategorie, Symbol und Turnus aus.
 2. **Betrag** und **Erste Fälligkeit** (die nächste Abbuchung) eintragen.
 3. Den **Turnus** prüfen:
    - *monatlich, vierteljährlich, halbjährlich, jährlich, alle X Monate*: fester Kalendertag, z.B. GEZ am 15. jedes dritten Monats
@@ -107,7 +107,7 @@ Tab **Posten** → **+ Neuer Posten**.
 
 Bei der **Kategorie** öffnet sich beim Antippen eine Liste der vorhandenen Kategorien, Tippen filtert sie. Eine neue Kategorie gibst du einfach ein.
 
-Beim **Symbol** einfach lostippen: Eine Liste schlägt passende MDI-Symbole vor (englische Namen wie `netflix`, `car`, `home`, aber auch gängige deutsche Wörter wie „Auto“, „Strom“, „Geld“ oder „Versicherung“). Antippen oder Enter übernimmt den ersten Vorschlag. Alternativ geht ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
+Beim **Symbol** einfach lostippen: Eine Liste schlägt passende MDI-Symbole vor (englische Namen wie `router`, `car`, `home`, aber auch gängige deutsche Wörter wie „Auto“, „Strom“, „Geld“ oder „Versicherung“). Antippen oder Enter übernimmt den ersten Vorschlag. Alternativ geht ein Emoji. Die Vorschau neben dem Feld zeigt sofort, wie es aussieht.
 
 **Was in welches Feld gehört:**
 
