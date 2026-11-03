@@ -1,6 +1,6 @@
 # Haushaltsbuch für Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore&logoColor=white)](https://hacs.xyz)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?logo=homeassistantcommunitystore&logoColor=white)](https://hacs.xyz)
 [![Release](https://img.shields.io/github/v/release/FabianWeyerstall/ha-haushaltsbuch?label=Version)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/releases)
 [![Prüfungen](https://img.shields.io/github/actions/workflow/status/FabianWeyerstall/ha-haushaltsbuch/validate.yml?branch=main&label=Pr%C3%BCfungen)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/actions/workflows/validate.yml)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-18BCF2.svg?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
@@ -43,11 +43,23 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 
 ## Installation über HACS
 
+Das Haushaltsbuch ist im HACS-Standardverzeichnis, du findest es direkt in HACS:
+
+[![In HACS öffnen](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FabianWeyerstall&repository=ha-haushaltsbuch&category=integration)
+
+1. In Home Assistant **HACS** öffnen und nach **Haushaltsbuch** suchen (oder den Knopf oben benutzen)
+2. **Herunterladen** und Home Assistant neu starten
+3. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Haushaltsbuch**
+4. In der Seitenleiste erscheint **Haushaltsbuch**, auch in der Home-Assistant-App auf dem iPhone
+
+<details>
+<summary>Falls es in HACS nicht auftaucht: als benutzerdefiniertes Repository hinzufügen</summary>
+
 1. HACS öffnen → oben rechts ⋮ → **Benutzerdefinierte Repositories**
 2. `https://github.com/FabianWeyerstall/ha-haushaltsbuch` als Typ **Integration** hinzufügen
-3. **Haushaltsbuch** installieren und Home Assistant neu starten
-4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Haushaltsbuch**
-5. In der Seitenleiste erscheint **Haushaltsbuch**, auch in der Home-Assistant-App auf dem iPhone
+3. Weiter mit Schritt 2 oben
+
+</details>
 
 ## So funktioniert das Haushaltsbuch
 
