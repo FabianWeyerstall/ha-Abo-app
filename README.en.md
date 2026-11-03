@@ -1,6 +1,6 @@
 # Household Budget (Haushaltsbuch) for Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore&logoColor=white)](https://hacs.xyz)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?logo=homeassistantcommunitystore&logoColor=white)](https://hacs.xyz)
 [![Release](https://img.shields.io/github/v/release/FabianWeyerstall/ha-haushaltsbuch?label=Version)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/releases)
 [![Checks](https://img.shields.io/github/actions/workflow/status/FabianWeyerstall/ha-haushaltsbuch/validate.yml?branch=main&label=Checks)](https://github.com/FabianWeyerstall/ha-haushaltsbuch/actions/workflows/validate.yml)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-18BCF2.svg?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
@@ -46,11 +46,23 @@ All items are entered by hand. There is no bank connection, and the data stays i
 
 ## Installation via HACS
 
+Haushaltsbuch is in the HACS default store, so you can find it directly in HACS:
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FabianWeyerstall&repository=ha-haushaltsbuch&category=integration)
+
+1. In Home Assistant, open **HACS** and search for **Haushaltsbuch** (or use the button above)
+2. **Download** it and restart Home Assistant
+3. **Settings → Devices & services → Add integration → Haushaltsbuch**
+4. **Haushaltsbuch** appears in the sidebar (the sidebar title is the same for all users), also in the Home Assistant companion app
+
+<details>
+<summary>If it does not show up in HACS: add it as a custom repository</summary>
+
 1. Open HACS → ⋮ (top right) → **Custom repositories**
 2. Add `https://github.com/FabianWeyerstall/ha-haushaltsbuch` with type **Integration**
-3. Install **Haushaltsbuch** (Household Budget) and restart Home Assistant
-4. **Settings → Devices & services → Add integration → Haushaltsbuch**
-5. **Haushaltsbuch** appears in the sidebar (the sidebar title is the same for all users), also in the Home Assistant companion app
+3. Continue with step 2 above
+
+</details>
 
 ## How it works
 
