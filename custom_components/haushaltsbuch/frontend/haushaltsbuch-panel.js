@@ -664,8 +664,46 @@ class HaushaltsbuchPanel extends HTMLElement {
     </div>`;
   }
 
+  // Budget money taken off the balance between two listed days, keyed by the
+  // listed day, so every change of the balance is visible as a row.
+  _budgetGaps(allDays, shown, balanceDate) {
+    const listed = new Set(shown.map((d) => d.date));
+    const gaps = {};
+    let sum = 0, n = 0, from = null;
+    for (const d of allDays) {
+      if (d.budget && d.balance_likely !== null && (!balanceDate || d.date > balanceDate)) {
+        sum += d.budget;
+        n += 1;
+        from ??= d.date;
+      }
+      if (listed.has(d.date)) {
+        if (Math.abs(sum) >= 0.005) gaps[d.date] = { sum, n, from, to: d.date };
+        sum = 0; n = 0; from = null;
+      }
+    }
+    return gaps;
+  }
+
+  _renderBudgetRow(g) {
+    if (!g) return "";
+    const budgets = this._scopeItems().filter((i) => i.schedule?.frequency === "budget" && i.start_date <= g.to && (!i.end_date || i.end_date >= g.from));
+    const names = budgets.map((i) => i.name).join(", ");
+    const span = g.n === 1 ? tr("1 Tag anteilig", "1 day pro rata") : tr(`${g.n} Tage anteilig, ${shortDay(g.from)}–${shortDay(g.to)}`, `${g.n} days pro rata, ${shortDay(g.from)}–${shortDay(g.to)}`);
+    const one = budgets.length === 1 ? budgets[0] : null;
+    return `<div class="entry budget-row" ${one ? `data-action="edit-item" data-item="${esc(one.id)}"` : ""}>
+      <div class="entry-icon">${this._icon(one?.icon || "mdi:wallet-outline")}</div>
+      <div class="entry-main">
+        <div class="entry-name">${tr("Budget", "Budget")}${names ? `: ${esc(names)}` : ""}</div>
+        <div class="entry-meta">${span} <span class="chip budget">Budget</span>${this._help(tr("Budgets wie Lebensmittel haben keine festen Termine. Die App zieht sie gleichmäßig über den Monat verteilt jeden Tag ein Stück vom erwarteten Kontostand ab. Hier steht, wie viel davon seit dem letzten Tag in der Liste abgezogen wurde.", "Budgets such as groceries have no fixed dates. The app takes them off the expected balance a little every day, spread evenly over the month. This row shows how much was taken off since the previous day in the list."))}</div>
+      </div>
+      <div class="entry-amount ${g.sum < 0 ? "neg" : "pos"}">${this._money(g.sum, true)}</div>
+    </div>`;
+  }
+
   _renderTimeline() {
-    const days = (this._forecast?.days || []).filter((d) => d.entries.length);
+    const allDays = this._forecast?.days || [];
+    const days = allDays.filter((d) => d.entries.length);
+    const gaps = this._budgetGaps(allDays, days, this._forecast?.balance_date);
     const ranges = [7, 30, 90];
     const pending = this._pending.length
       ? `<div class="card">
@@ -683,6 +721,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             (d) => `<div class="day">
               <div class="day-head"><span>${this._dateLabel(d.date)}</span>${d.balance_likely !== null ? `<span class="day-balance ${d.balance_likely < 0 ? "neg" : ""}">${this._money(d.balance_likely)}</span>` : ""}</div>
               ${d.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("")}
+              ${this._renderBudgetRow(gaps[d.date])}
             </div>`
           )
           .join("")
@@ -759,8 +798,10 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _renderMonthList() {
-    const days = (this._calendar?.days || []).filter((d) => d.entries.some((e) => e.status !== "skipped"));
+    const allDays = this._calendar?.days || [];
+    const days = allDays.filter((d) => d.entries.some((e) => e.status !== "skipped"));
     const t = iso(today());
+    const gaps = this._budgetGaps(allDays, days, this._calendar?.balance_date);
     return `<div class="card">
       <h3>${tr(`Alle Buchungen im ${monthName(this._month.getMonth())}`, `All bookings in ${monthName(this._month.getMonth())}`)}</h3>
       <p class="hint">${tr("Tippe oben auf einen Tag, um nur diesen Tag zu sehen.", "Tap a day above to see only that day.")}</p>
@@ -770,6 +811,7 @@ class HaushaltsbuchPanel extends HTMLElement {
               (d) => `<div class="day ${d.date < t ? "past" : ""}">
                 <div class="day-head"><span>${this._dateLabel(d.date)}</span>${d.balance_likely !== null && d.date >= t ? `<span class="day-balance ${d.balance_likely < 0 ? "neg" : ""}">${this._money(d.balance_likely)}</span>` : ""}</div>
                 ${d.entries.map((e) => this._renderEntry(e, { special: this._specialOf(e) })).join("")}
+                ${d.date >= t ? this._renderBudgetRow(gaps[d.date]) : ""}
               </div>`
             )
             .join("")
@@ -1993,6 +2035,9 @@ const STYLES = `
   .pending-date { font-size: 12px; color: var(--secondary-text-color); margin-top: 8px; }
   .entry { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; border-radius: 8px; flex-wrap: wrap; }
   .entry:hover { background: var(--secondary-background-color); }
+  .entry.budget-row { opacity: 0.8; }
+  .entry.budget-row:not([data-action]) { cursor: default; }
+  .entry.budget-row .entry-name { font-style: italic; }
   .entry-icon { width: 40px; height: 40px; border-radius: 50%; background: var(--secondary-background-color); display: flex; align-items: center; justify-content: center; color: var(--primary-color); flex-shrink: 0; }
   .entry-main { flex: 1; min-width: 0; }
   .entry-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

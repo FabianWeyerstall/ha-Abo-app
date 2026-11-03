@@ -30,7 +30,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 - **Certainty level** per booking: *certain*, *likely* or *uncertain*. It is derived from how much amount and date vary and whether recent bookings were confirmed on time. Can also be fixed per entry.
 - **Price changes**: a new amount from a given date; earlier bookings keep the old amount
 - **Contracts**: term, notice period and automatic renewal. The timeline tells you in time by when you have to cancel.
-- **Budgets** for variable spending such as groceries: a monthly amount that is spread evenly across the month
+- **Budgets** for variable spending such as groceries: a monthly amount that is spread evenly across the month. The timeline shows on each day, as its own row, how much budget was taken off since the previous day, so every daily balance adds up
 - **Rolling entries learn** the real average interval after three confirmed bookings
 - **Fix a date** for a single booking. For rolling entries, all later dates move along; otherwise only this one booking moves.
 - **Confirm** due bookings as *booked* (optionally with the real date and amount) or *skipped*
