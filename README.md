@@ -29,7 +29,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Sicherheitsstufe** pro Buchung: *sicher*, *wahrscheinlich* oder *unsicher*. Sie ergibt sich aus Schwankung von Betrag und Datum und daraus, ob die letzten Buchungen pünktlich bestätigt wurden. Pro Posten auch fest einstellbar.
 - **Preisänderungen**: neuer Betrag ab einem Datum, frühere Buchungen behalten den alten Betrag
 - **Verträge**: Laufzeit, Kündigungsfrist und automatische Verlängerung. Die Zeitleiste zeigt rechtzeitig, bis wann du kündigen musst.
-- **Budgets** für variable Ausgaben wie Lebensmittel oder Freizeit: ein Monatsbetrag, der gleichmäßig über den Monat vom erwarteten Kontostand abgeht
+- **Budgets** für variable Ausgaben wie Lebensmittel oder Freizeit: ein Monatsbetrag, der gleichmäßig über den Monat vom erwarteten Kontostand abgeht. In der Zeitleiste steht an jedem Tag als eigene Zeile, wie viel Budget seit dem letzten Tag abgezogen wurde, damit jeder Tagessaldo aufgeht
 - **Gleitende Posten lernen** ab drei bestätigten Terminen den echten durchschnittlichen Abstand
 - **Termin festlegen**: Datum und Betrag einer einzelnen Buchung festlegen. Bei gleitenden Posten rücken alle weiteren Termine nach, sonst wird nur diese eine Buchung verschoben.
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
