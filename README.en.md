@@ -35,6 +35,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 - **Fix a date** for a single booking. For rolling entries, all later dates move along; otherwise only this one booking moves.
 - **Confirm** due bookings as *booked* (optionally with the real date and amount) or *skipped*
 - **Weekends and bank holidays**: bookings move to the next business day, salary to the previous one (configurable per entry)
+- **Salary month**: if your salary arrives at the end of the month (e.g. on the last Thursday), months and figures run from payday to payday and the overview shows the balance **before the next payday**
 - **Monthly overview** with income, expenses and balance for 12 months. **Special entries** (anything that does not occur every month, e.g. insurance, bonus) are highlighted. Below that, **spending per category**.
 - **Overview** dashboard with key figures and a pie chart by category
 - **Search** in entries and **confirm all open bookings at once**
@@ -115,7 +116,7 @@ Tab **Entries** → **+ New entry**.
    - *once*: e.g. a bonus or an invoice
    - *monthly budget*: for spending without fixed dates, e.g. groceries. No single bookings; the budget is spread evenly over the month.
 4. Optionally **set an end date**, e.g. when a loan ends.
-5. For income such as your salary: tick **"My month starts with this income"** if the salary arrives at the end of the month and pays the next month's debits. Months then run from payday to payday (see [Months](#6-months)).
+5. For income such as your salary: tick **"My month starts with this income"** if the salary arrives at the end of the month and pays the next month's debits. Months then run from payday to payday (see [Salary at the end of the month](#salary-at-the-end-of-the-month-salary-month)).
 6. Under **Variation and certainty**: amount variance in %, date tolerance, fixed certainty level and weekend behaviour.
 
 The **Category** field opens a list of existing categories; typing filters it. To create a new category, just type it.
@@ -147,6 +148,26 @@ Every morning at 9:00 the integration checks all contracts. If one has to be can
 3. Test: **Developer tools → Actions → "Haushaltsbuch: Send contract reminders"** with **All upcoming** enabled. You immediately get a notification for every contract cancellable within the next 60 days.
 
 The event contains `name`, `cancel_by`, `contract_end`, `days_left`, `renews`, `amount`, `owner_name` and `household` if you prefer your own automation.
+
+### Salary at the end of the month (salary month)
+
+Many people are not paid on the 1st but at the end of the month, e.g. **always on the last Thursday**. That salary pays the debits that follow (rent, electricity, insurance). If the app counted in calendar months, the end of the month would look like a lot of money is left, although it is meant for the next month. To switch:
+
+1. Open your salary entry (or create one, e.g. with the **Salary** template).
+2. **Repeats:** *monthly on a weekday*, then **Which day?** → *last* and *Thursday*. *First* to *fourth* and any other weekday work too.
+3. **Valid from:** roughly from when this applies. The app works out the dates itself.
+4. Tick **"My month starts with this income (salary)"** and save.
+
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/en/14-salary.png" alt="Salary on the last Thursday with salary month" width="260">
+
+What changes:
+
+- **Months:** each month runs from payday to payday. Below the month name you see from when it counts, e.g. "Nov 26, from 10/29". A salary paid after the 15th belongs to the next month, so a salary at the end of October counts for November, together with the debits it pays.
+- **Overview:** instead of "Expected at month end" it shows **"Before next payday"**: what is left the day before the next salary, when all of the month's debits have gone out. That is the honest figure for what is really left.
+- The overview's breakdowns (categories, certainty, special entries) use these salary months too.
+- **Timeline and calendar** stay as they are. The calendar keeps normal calendar months.
+
+Only one income can carry the tick, and it applies to you personally. Untick it and the app goes back to calendar months.
 
 ### 3. Reading the timeline
 
@@ -204,7 +225,7 @@ For the next 12 months, income (green) and expenses (red) are shown as bars. Ful
 
 **Special entries** are highlighted in yellow and listed as labels under the month. At the top you choose what counts as special: by default everything that does not occur every month, or e.g. only quarterly and less frequent, optionally above a minimum amount. The setting applies to months, timeline and calendar.
 
-**Salary month:** If your salary arrives at the end of the month (e.g. on the last Thursday), tick "My month starts with this income" in the salary entry. Each month then runs from payday to payday, and below the month name you see from when it counts. A salary paid after the 15th belongs to the next month, so a salary at the end of October counts for November, together with the debits it pays. The calendar keeps normal calendar months.
+**Salary month:** If you ticked "My month starts with this income" on your salary, each month runs from payday to payday and below the month name you see from when it counts (see [Salary at the end of the month](#salary-at-the-end-of-the-month-salary-month)).
 
 Tap a month to expand its bookings. At the bottom, **spending per category**: large is the average per month, small the sum of the next 12 months.
 
