@@ -1,5 +1,5 @@
 """Tests for the pure calculation logic (no Home Assistant needed)."""
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -337,3 +337,60 @@ def test_months_run_from_payday_to_payday():
     assert salary_periods([salary], "gehalt", date(2026, 11, 27), 1)[0][0] == date(2026, 12, 1)
     # Unknown salary item: calendar months.
     assert salary_periods([rent], "gehalt", date(2026, 11, 3), 1) is None
+
+
+def _budget(**kw):
+    return item(
+        id="essen", amount=600.0, start_date="2026-01-01",
+        schedule={"frequency": "budget", "interval": 1}, **kw,
+    )
+
+
+def test_untracked_budget_is_spread_evenly():
+    from custom_components.haushaltsbuch.engine import budget_amounts
+    amounts = budget_amounts(_budget(), date(2026, 11, 1), date(2026, 11, 30), date(2026, 11, 10))
+    assert round(sum(amounts.values()), 2) == 600.0
+    assert round(amounts[date(2026, 11, 1)], 2) == 20.0
+
+
+def test_spendings_shrink_the_rest_and_rest_expires():
+    from custom_components.haushaltsbuch.engine import budget_amounts, budget_status
+    b = _budget(spendings=[
+        {"id": "a", "date": "2026-11-02", "amount": 150.0},
+        {"id": "b", "date": "2026-11-09", "amount": 150.0},
+    ])
+    today = date(2026, 11, 11)  # 20 days left including today
+    amounts = budget_amounts(b, date(2026, 11, 1), date(2026, 11, 30), today)
+    assert amounts[date(2026, 11, 2)] == 150.0
+    assert date(2026, 11, 5) not in amounts  # past days count only real spending
+    assert round(amounts[date(2026, 11, 11)], 2) == 15.0  # 300 left over 20 days
+    assert round(sum(amounts.values()), 2) == 600.0
+    # The next month starts fresh with the full budget.
+    december = budget_amounts(b, date(2026, 12, 1), date(2026, 12, 31), today)
+    assert round(sum(december.values()), 2) == 600.0
+    status = budget_status(b, today)
+    assert status["spent"] == 300.0 and status["rest"] == 300.0 and status["days_left"] == 20
+
+
+def test_overspent_budget_adds_nothing_more():
+    from custom_components.haushaltsbuch.engine import budget_amounts, budget_status
+    b = _budget(spendings=[{"id": "a", "date": "2026-11-05", "amount": 700.0}])
+    today = date(2026, 11, 20)
+    amounts = budget_amounts(b, date(2026, 11, 1), date(2026, 11, 30), today)
+    assert amounts == {date(2026, 11, 5): 700.0}
+    assert budget_status(b, today)["rest"] == -100.0
+
+
+def test_budget_month_follows_salary_cycle():
+    from custom_components.haushaltsbuch.engine import budget_status, period_finder
+    salary = item(
+        id="gehalt", direction="income", amount=2700.0, start_date="2026-01-01",
+        weekend_shift="previous",
+        schedule={"frequency": "monthly", "interval": 1, "weekday": 3, "week": -1},
+    )
+    b = _budget(spendings=[{"id": "a", "date": "2026-10-30", "amount": 100.0}])
+    today = date(2026, 11, 3)
+    find = period_finder([salary, b], "gehalt", today - timedelta(days=60), today + timedelta(days=60))
+    assert find(today) == (date(2026, 10, 29), date(2026, 11, 25))
+    status = budget_status(b, today, find)
+    assert status["spent"] == 100.0 and status["start"] == "2026-10-29"

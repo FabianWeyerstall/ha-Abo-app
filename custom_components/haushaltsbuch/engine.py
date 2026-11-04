@@ -7,7 +7,7 @@ from __future__ import annotations
 from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 SURE = "sicher"
 LIKELY = "wahrscheinlich"
@@ -486,15 +486,157 @@ def _budget_active(item: dict[str, Any], day: date) -> bool:
     return start is not None and start <= day and (end is None or day <= end)
 
 
-def budget_per_day(items: Iterable[dict[str, Any]], day: date) -> float:
-    """Signed sum of all budgets for one day (a month's budget spread evenly)."""
-    days_in_month = monthrange(day.year, day.month)[1]
-    total = 0.0
+PeriodFinder = Callable[[date], tuple[date, date]]
+
+
+def calendar_period(day: date) -> tuple[date, date]:
+    """First and last day of the calendar month of `day`."""
+    return day.replace(day=1), day.replace(day=monthrange(day.year, day.month)[1])
+
+
+def period_finder(
+    items: Iterable[dict[str, Any]], salary_id: str | None, start: date, end: date
+) -> PeriodFinder:
+    """Budget months: calendar months, or payday to payday with a salary item."""
+    items = list(items)
+    item = next((i for i in items if salary_id and i.get("id") == salary_id), None)
+    if item is None:
+        return calendar_period
+    boundaries: dict[date, date] = {}
+    for occ in occurrences([item], start - timedelta(days=70), end + timedelta(days=70)):
+        if occ.status == STATUS_SKIPPED:
+            continue
+        label = _cycle_label(occ.date)
+        if label not in boundaries or occ.date < boundaries[label]:
+            boundaries[label] = occ.date
+
+    def start_of(label: date) -> date:
+        return boundaries.get(label, label)
+
+    def find(day: date) -> tuple[date, date]:
+        first = day.replace(day=1)
+        for label in (_add_months(first, -1, 1), first, _add_months(first, 1, 1)):
+            begin = start_of(label)
+            stop = start_of(_add_months(label, 1, 1)) - timedelta(days=1)
+            if begin <= day <= stop:
+                return begin, stop
+        return calendar_period(day)
+
+    return find
+
+
+def _spendings_by_day(item: dict[str, Any]) -> dict[date, float]:
+    result: dict[date, float] = {}
+    for spending in item.get("spendings") or []:
+        day = parse_date(spending.get("date"))
+        if day is not None:
+            result[day] = result.get(day, 0.0) + abs(float(spending.get("amount") or 0))
+    return result
+
+
+def _budget_plan(
+    item: dict[str, Any], period: tuple[date, date]
+) -> tuple[float, list[date]]:
+    """The budget for one period (pro rata if it starts or ends inside) and its active days."""
+    begin, stop = period
+    total_days = (stop - begin).days + 1
+    active = [
+        begin + timedelta(days=i)
+        for i in range(total_days)
+        if _budget_active(item, begin + timedelta(days=i))
+    ]
+    budget = sum(abs(amount_on(item, day)) / total_days for day in active)
+    return budget, active
+
+
+def budget_amounts(
+    item: dict[str, Any],
+    start: date,
+    end: date,
+    today: date | None = None,
+    find_period: PeriodFinder = calendar_period,
+) -> dict[date, float]:
+    """Unsigned budget money per day in [start, end].
+
+    Without recorded spendings the budget is spread evenly over the days of
+    its period. Once spendings are recorded, past days count what was really
+    spent, and what is left of the period's budget is spread over the
+    remaining days (nothing more when it is used up; a rest does not carry
+    over into the next period).
+    """
+    today = today or date.today()
+    spent_by_day = _spendings_by_day(item)
+    tracked = bool(spent_by_day)
+    result: dict[date, float] = {}
+    plans: dict[tuple[date, date], tuple[float, float]] = {}
+    day = start
+    while day <= end:
+        period = find_period(day)
+        if period not in plans:
+            budget, active = _budget_plan(item, period)
+            if tracked:
+                spent = sum(v for d, v in spent_by_day.items() if period[0] <= d <= period[1])
+                rest_days = [d for d in active if d >= today]
+                rest = max(0.0, budget - spent)
+                plans[period] = (rest / len(rest_days) if rest_days else 0.0, budget)
+            else:
+                plans[period] = (budget / len(active) if active else 0.0, budget)
+        per_day, _ = plans[period]
+        amount = spent_by_day.get(day, 0.0)
+        if (not tracked or day >= today) and _budget_active(item, day):
+            amount += per_day
+        if amount:
+            result[day] = amount
+        day += timedelta(days=1)
+    return result
+
+
+def budget_status(
+    item: dict[str, Any], today: date | None = None, find_period: PeriodFinder = calendar_period
+) -> dict[str, Any]:
+    """Budget, spent and rest of the current period, for the budget bars."""
+    today = today or date.today()
+    begin, stop = find_period(today)
+    budget, active = _budget_plan(item, (begin, stop))
+    spendings = [
+        s for s in item.get("spendings") or []
+        if begin.isoformat() <= str(s.get("date")) <= stop.isoformat()
+    ]
+    spent = sum(abs(float(s.get("amount") or 0)) for s in spendings)
+    elapsed = len([d for d in active if d <= today])
+    return {
+        "start": begin.isoformat(),
+        "end": stop.isoformat(),
+        "budget": round(budget, 2),
+        "spent": round(spent, 2),
+        "rest": round(budget - spent, 2),
+        "days_left": len([d for d in active if d >= today]),
+        "planned_by_today": round(budget * elapsed / len(active), 2) if active else 0.0,
+        "spendings": sorted(spendings, key=lambda s: (s["date"], s.get("id", "")), reverse=True),
+    }
+
+
+def budget_by_day(
+    items: Iterable[dict[str, Any]],
+    start: date,
+    end: date,
+    today: date | None = None,
+    find_period: PeriodFinder = calendar_period,
+) -> dict[date, float]:
+    """Signed sum of all budgets per day."""
+    total: dict[date, float] = {}
     for item in items:
-        if _is_budget(item) and _budget_active(item, day):
-            sign = 1 if item.get("direction") == INCOME else -1
-            total += sign * abs(amount_on(item, day)) / days_in_month
+        if not _is_budget(item):
+            continue
+        sign = 1 if item.get("direction") == INCOME else -1
+        for day, amount in budget_amounts(item, start, end, today, find_period).items():
+            total[day] = total.get(day, 0.0) + sign * amount
     return total
+
+
+def budget_per_day(items: Iterable[dict[str, Any]], day: date) -> float:
+    """Signed sum of all budgets for one day (kept for callers of the old API)."""
+    return budget_by_day(items, day, day).get(day, 0.0)
 
 
 @dataclass
@@ -521,6 +663,8 @@ def forecast(
     end: date,
     balance: float | None,
     balance_date: date | None,
+    today: date | None = None,
+    find_period: PeriodFinder = calendar_period,
 ) -> list[ForecastDay]:
     """Day-by-day list of bookings with the projected balance after each day.
 
@@ -539,12 +683,13 @@ def forecast(
     for occ in all_occ:
         by_day.setdefault(occ.date, []).append(occ)
 
+    budgets = budget_by_day(items, calc_start, end, today, find_period)
     days: list[ForecastDay] = []
     sure = likely = balance
     day = calc_start
     while day <= end:
         entries = by_day.get(day, [])
-        budget = budget_per_day(items, day)
+        budget = budgets.get(day, 0.0)
         if balance is not None and balance_date is not None and day > balance_date:
             likely += budget
             if budget < 0:
@@ -630,6 +775,8 @@ def month_summaries(
     first_month: date,
     months: int,
     periods: list[tuple[date, date, date]] | None = None,
+    today: date | None = None,
+    find_period: PeriodFinder = calendar_period,
 ) -> list[dict[str, Any]]:
     """Income, expenses and net per month, split by certainty.
 
@@ -668,17 +815,13 @@ def month_summaries(
         for item in items:
             if not _is_budget(item):
                 continue
-            active = [
-                month_start + timedelta(days=i)
-                for i in range((month_end - month_start).days + 1)
-                if _budget_active(item, month_start + timedelta(days=i))
-            ]
-            if not active:
+            amounts = budget_amounts(item, month_start, month_end, today, find_period)
+            if not amounts:
                 continue
-            # Pro rata for months in which the budget starts or ends.
-            amount = abs(amount_on(item, active[0])) * len(active) / ((month_end - month_start).days + 1)
+            amount = sum(amounts.values())
             income = item.get("direction") == INCOME
             summary["income" if income else "expense"] += amount
+            first_day = min(amounts)
             entries.append(
                 {
                     **Occurrence(
@@ -688,8 +831,8 @@ def month_summaries(
                         icon=item.get("icon") or "",
                         direction=item.get("direction", EXPENSE),
                         owner=item.get("owner", ""),
-                        due_date=active[0],
-                        date=active[0],
+                        due_date=first_day,
+                        date=first_day,
                         amount=amount if income else -amount,
                         certainty=LIKELY,
                         household_id=item.get("household_id"),

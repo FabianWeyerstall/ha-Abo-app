@@ -175,3 +175,34 @@ async def test_contract_reminder_event_and_service(hass: HomeAssistant, hass_ws_
     data = events[0].data
     assert data["name"] == "Netflix" and data["days_left"] == 7 and data["cancel_by"] == cancel_in_7
     assert data["household"] is None and "owner_name" in data
+
+
+async def test_add_expense_service_and_budget_status(hass: HomeAssistant, hass_ws_client) -> None:
+    from homeassistant.util import dt as dt_util
+
+    await _setup(hass)
+    client = await hass_ws_client(hass)
+    today = dt_util.now().date()
+    await client.send_json_auto_id(
+        {
+            "type": f"{DOMAIN}/item/save",
+            "item": {**_item(today), "name": "Lebensmittel", "amount": 600, "schedule": {"frequency": "budget"}},
+        }
+    )
+    assert (await client.receive_json())["success"]
+    result = await hass.services.async_call(
+        DOMAIN, "add_expense", {"budget": "lebensmittel", "amount": 47.8, "note": "Markt"},
+        blocking=True, return_response=True,
+    )
+    assert result["budget"] == "Lebensmittel" and result["spent"] == 47.8
+    assert result["rest"] < 600
+    await client.send_json_auto_id({"type": f"{DOMAIN}/state"})
+    state = (await client.receive_json())["result"]
+    budget = next(i for i in state["items"] if i["name"] == "Lebensmittel")
+    assert budget["budget_status"]["spent"] == 47.8
+    assert "spendings" not in budget
+    spending_id = budget["budget_status"]["spendings"][0]["id"]
+    await client.send_json_auto_id(
+        {"type": f"{DOMAIN}/spending/delete", "item_id": budget["id"], "spending_id": spending_id}
+    )
+    assert (await client.receive_json())["success"]

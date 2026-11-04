@@ -2,6 +2,9 @@
   "services": {
     "send_contract_reminders": {
       "service": "mdi:bell-ring"
+    },
+    "add_expense": {
+      "service": "mdi:cart-plus"
     }
   }
 }

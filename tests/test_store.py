@@ -238,3 +238,27 @@ def test_salary_setting_and_weekday_schedule():
         "anna", {**ITEM, "schedule": {"frequency": "yearly", "interval": 1, "weekday": 3}}
     )
     assert "weekday" not in book.data["items"][yearly]["schedule"]
+
+
+def test_spendings_on_budgets_only_and_for_household_members():
+    book = Book()
+    hh = book.create_household("anna", "Familie", ["ben"])
+    budget = book.save_item(
+        "anna", {**ITEM, "name": "Lebensmittel", "schedule": {"frequency": "budget"}, "household_id": hh}
+    )
+    other = book.save_item("anna", ITEM)
+    sid = book.add_spending("ben", budget, "2026-11-02", "47.80", "Markt")
+    assert book.data["items"][budget]["spendings"][0]["amount"] == 47.8
+    with pytest.raises(ValidationError):
+        book.add_spending("anna", other, "2026-11-02", 10)
+    with pytest.raises(AccessError):
+        book.add_spending("carla", budget, "2026-11-02", 10)
+    for bad in ("0", "-", None):
+        with pytest.raises(ValidationError):
+            book.add_spending("anna", budget, "2026-11-02", bad)
+    # Saving the budget again keeps its spendings.
+    book.save_item("anna", {**ITEM, "id": budget, "name": "Lebensmittel", "schedule": {"frequency": "budget"}, "household_id": hh})
+    assert len(book.data["items"][budget]["spendings"]) == 1
+    assert book.find_budget("ben", "lebensmittel")["id"] == budget
+    book.delete_spending("anna", budget, sid)
+    assert book.data["items"][budget]["spendings"] == []
