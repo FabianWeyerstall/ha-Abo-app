@@ -260,5 +260,12 @@ def test_spendings_on_budgets_only_and_for_household_members():
     book.save_item("anna", {**ITEM, "id": budget, "name": "Lebensmittel", "schedule": {"frequency": "budget"}, "household_id": hh})
     assert len(book.data["items"][budget]["spendings"]) == 1
     assert book.find_budget("ben", "lebensmittel")["id"] == budget
+    book.update_spending("ben", budget, sid, "2026-11-01", "52,5".replace(",", "."), "Wochenmarkt")
+    entry = book.data["items"][budget]["spendings"][0]
+    assert (entry["date"], entry["amount"], entry["note"], entry["by"]) == ("2026-11-01", 52.5, "Wochenmarkt", "ben")
+    with pytest.raises(ValidationError):
+        book.update_spending("anna", budget, "nope", "2026-11-01", 5)
+    with pytest.raises(AccessError):
+        book.update_spending("carla", budget, sid, "2026-11-01", 5)
     book.delete_spending("anna", budget, sid)
     assert book.data["items"][budget]["spendings"] == []

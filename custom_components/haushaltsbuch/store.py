@@ -341,6 +341,34 @@ class Book:
         item["spendings"] = spendings[-1000:]
         return spending_id
 
+    def update_spending(
+        self,
+        user_id: str,
+        item_id: str,
+        spending_id: str,
+        spent_on: str,
+        amount: Any,
+        note: str | None = None,
+    ) -> None:
+        """Correct a recorded spending: date, amount and note."""
+        item = self.data["items"].get(item_id)
+        if item is None or not self.can_see(user_id, item):
+            raise AccessError("item")
+        _check_date(spent_on, "date")
+        try:
+            value = round(abs(float(amount)), 2)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("amount") from err
+        if not 0 < value < 1_000_000:
+            raise ValidationError("amount")
+        spendings = list(item.get("spendings") or [])
+        entry = next((x for x in spendings if x.get("id") == spending_id), None)
+        if entry is None:
+            raise ValidationError("spending")
+        entry.update({"date": spent_on, "amount": value, "note": str(note or "")[:200]})
+        spendings.sort(key=lambda x: (x["date"], x["id"]))
+        item["spendings"] = spendings
+
     def delete_spending(self, user_id: str, item_id: str, spending_id: str) -> None:
         item = self.data["items"].get(item_id)
         if item is None or not self.can_see(user_id, item):

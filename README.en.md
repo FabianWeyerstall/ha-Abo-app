@@ -190,7 +190,7 @@ A budget such as “Groceries 600 € per month” starts as a placeholder: the 
 - At the top of the **Timeline** and the **Overview** is the card **Budgets this month**. For each budget: how much is gone, how much is left and what that means per day until the month ends.
 - **Green bar:** on track. **Orange:** spent faster than planned. The line in the bar shows how much would be due by today if spread evenly. **Red:** over budget, e.g. “68 € over”.
 - **+ Spending** opens a small form: budget, amount, date and a note such as “weekly shop”. The **date** defaults to today; if you forgot something, just set it back. The spending counts in the month its date falls in.
-- Tap a budget to see all spendings of the month. ✕ deletes one, e.g. after a typo.
+- Tap a budget to see all spendings of the month. Tap a spending to change its amount, date, note or budget. ✕ deletes it.
 - For the balance, past days count the real amounts and what is left of the budget is spread over the remaining days. At the end of the month the rest **expires**; the next month starts with the full budget again. If you are over, nothing more is taken off.
 - With the [salary month](#salary-at-the-end-of-the-month-salary-month) the budget month also runs from payday to payday.
 - For a budget in a shared household, every member can enter spendings.

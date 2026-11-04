@@ -735,7 +735,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const rows = s.spendings.length
       ? s.spendings
           .map(
-            (x) => `<div class="spending">
+            (x) => `<div class="spending" data-action="spending-edit" data-item="${esc(i.id)}" data-id="${esc(x.id)}">
               <span class="spending-date">${shortDay(x.date)}</span>
               <span class="spending-note">${esc(x.note || tr("Ausgabe", "Spending"))}${this._isHousehold() && users[x.by] ? ` <span class="owner">${esc(users[x.by])}</span>` : ""}</span>
               <span class="spending-amount neg">${this._money(-x.amount)}</span>
@@ -753,26 +753,27 @@ class HaushaltsbuchPanel extends HTMLElement {
           <div class="budget-sub ${over ? "neg" : ""}">${sub}${list ? ` · ${s.spendings.length === 1 ? tr("1 Eintrag", "1 entry") : tr(`${s.spendings.length} Einträge`, `${s.spendings.length} entries`)} <span class="chev">${open ? "▴" : "▾"}</span>` : ""}</div>
         </div>
       </div>
-      ${open ? `<div class="spendings">${rows}<button class="secondary small" data-action="spending-new" data-item="${esc(i.id)}">+ ${tr(`Ausgabe für ${esc(i.name)}`, `Spending for ${esc(i.name)}`)}</button></div>` : ""}
+      ${open ? `<div class="spendings">${s.spendings.length ? `<p class="hint">${tr("Antippen zum Ändern.", "Tap to edit.")}</p>` : ""}${rows}<button class="secondary small" data-action="spending-new" data-item="${esc(i.id)}">+ ${tr(`Ausgabe für ${esc(i.name)}`, `Spending for ${esc(i.name)}`)}</button></div>` : ""}
     </div>`;
   }
 
   _renderSpendingForm(d) {
     const budgets = this._budgets();
     const chosen = budgets.find((i) => i.id === d.item_id) || budgets[0];
+    const x = d.spending || {};
     return `<form data-form="spending">
-      <h2>${tr("Ausgabe erfassen", "Add spending")}</h2>
+      <h2>${x.id ? tr("Ausgabe bearbeiten", "Edit spending") : tr("Ausgabe erfassen", "Add spending")}</h2>
       <div class="grid">
         ${budgets.length > 1
           ? `<label class="full">${tr("Budget", "Budget")}<select name="item_id">${budgets.map((i) => `<option value="${esc(i.id)}" ${i.id === chosen.id ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select></label>`
           : `<input type="hidden" name="item_id" value="${esc(chosen?.id || "")}"><p class="hint full">${tr("Budget", "Budget")}: <b>${esc(chosen?.name || "")}</b></p>`}
-        <label>${tr("Betrag", "Amount")} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required autofocus></label>
-        <label>${tr("Datum", "Date")}<input name="date" type="date" required value="${esc(d.date || iso(today()))}"></label>
-        <label class="full">${tr("Notiz", "Note")}<input name="note" maxlength="200" placeholder="${tr("z.B. Wocheneinkauf", "e.g. weekly shop")}"></label>
+        <label>${tr("Betrag", "Amount")} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required ${x.id ? `value="${this._amountValue(x.amount)}"` : "autofocus"}></label>
+        <label>${tr("Datum", "Date")}<input name="date" type="date" required value="${esc(x.date || iso(today()))}"></label>
+        <label class="full">${tr("Notiz", "Note")}<input name="note" maxlength="200" placeholder="${tr("z.B. Wocheneinkauf", "e.g. weekly shop")}" value="${esc(x.note || "")}"></label>
       </div>
       <p class="hint">${tr("Vergessen einzutragen? Stell einfach das Datum zurück. Die Ausgabe zählt in dem Monat, in dem das Datum liegt.", "Forgot to enter something? Just set the date back. The spending counts in the month its date falls in.")}</p>
       ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
-      <div class="dialog-actions"><span></span><div>
+      <div class="dialog-actions">${x.id ? `<button type="button" class="danger" data-action="spending-delete" data-item="${esc(d.item_id)}" data-id="${esc(x.id)}">${tr("Löschen", "Delete")}</button>` : "<span></span>"}<div>
         <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
         <button type="submit">${tr("Speichern", "Save")}</button>
       </div></div>
@@ -1773,7 +1774,18 @@ class HaushaltsbuchPanel extends HTMLElement {
       });
     } else if (kind === "spending") {
       const f = new FormData(form);
-      this._run(() => this._ws("spending/add", { item_id: f.get("item_id"), date: f.get("date"), amount: this._parsedAmount(f.get("amount")), note: f.get("note") || null }));
+      const d = this._dialog;
+      const values = { date: f.get("date"), amount: this._parsedAmount(f.get("amount")), note: f.get("note") || null };
+      const target = f.get("item_id");
+      this._run(async () => {
+        if (!d.spending) await this._ws("spending/add", { item_id: target, ...values });
+        else if (target === d.item_id) await this._ws("spending/update", { item_id: target, spending_id: d.spending.id, ...values });
+        else {
+          // Moved to another budget: record it there, then remove the old one.
+          await this._ws("spending/add", { item_id: target, ...values });
+          await this._ws("spending/delete", { item_id: d.item_id, spending_id: d.spending.id });
+        }
+      });
     } else if (kind === "household") {
       const f = new FormData(form);
       const members = f.getAll("members");
@@ -2041,6 +2053,16 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._dialog = { type: "spending", item_id: target.dataset.item || null };
         this._render();
         break;
+      case "spending-edit": {
+        const item = this._state.items.find((i) => i.id === target.dataset.item);
+        const spending = item?.budget_status?.spendings.find((x) => x.id === target.dataset.id);
+        if (spending) {
+          this._error = null;
+          this._dialog = { type: "spending", item_id: item.id, spending: { ...spending } };
+          this._render();
+        }
+        break;
+      }
       case "spending-delete":
         if (confirm(tr("Diese Ausgabe löschen?", "Delete this spending?"))) this._run(() => this._ws("spending/delete", { item_id: target.dataset.item, spending_id: target.dataset.id }));
         break;
@@ -2162,7 +2184,7 @@ const STYLES = `
   .budget-bar.over span { background: var(--error-color, #db4437); }
   .budget-bar i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--primary-text-color); opacity: 0.45; }
   .spendings { margin: 6px 0 6px 48px; }
-  .spending { display: flex; gap: 10px; align-items: center; padding: 4px 0; font-size: 14px; border-bottom: 1px dashed var(--divider-color); }
+  .spending { cursor: pointer; display: flex; gap: 10px; align-items: center; padding: 4px 0; font-size: 14px; border-bottom: 1px dashed var(--divider-color); }
   .spending-date { color: var(--secondary-text-color); min-width: 44px; }
   .spending-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .spending-amount { white-space: nowrap; }
