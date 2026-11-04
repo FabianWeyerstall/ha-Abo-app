@@ -51,6 +51,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_import,
         ws_settings,
         ws_add_spending,
+        ws_update_spending,
         ws_delete_spending,
     ):
         websocket_api.async_register_command(hass, command)
@@ -413,6 +414,30 @@ async def ws_add_spending(hass, connection, msg, data):
         connection.user.id, msg["item_id"], msg["date"], msg["amount"], msg.get("note")
     )
     return ({"id": spending_id}, True)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/spending/update",
+        vol.Required("item_id"): str,
+        vol.Required("spending_id"): str,
+        vol.Required("date"): str,
+        vol.Required("amount"): vol.Coerce(float),
+        vol.Optional("note"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+@_handler
+async def ws_update_spending(hass, connection, msg, data):
+    data.book.update_spending(
+        connection.user.id,
+        msg["item_id"],
+        msg["spending_id"],
+        msg["date"],
+        msg["amount"],
+        msg.get("note"),
+    )
+    return (None, True)
 
 
 @websocket_api.websocket_command(
