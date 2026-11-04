@@ -247,7 +247,7 @@ Tap a month to expand its bookings. At the bottom, **spending per category**: la
 
 The dashboard at a glance: balance, expected balance at month end (with a salary month: **before the next payday**, when all debits have gone out), income and expenses per month, what is left per month and the lowest balance of the next 90 days. Below:
 
-- **Where most of the money goes:** a pie chart of expenses by category (the five largest, the rest under "Others").
+- **Where most of the money goes:** a pie chart of expenses by category (the five largest, the rest under "Others"). Below it you see what share of your income that is in total. Open a category to see its share of spending and of income, e.g. "47 % of your spending · 30 % of your income".
 - **Fixed costs, special entries and budgets** as shares of an average month.
 - **How certain are the expenses?** Share of certain, likely and uncertain expenses.
 - **What each schedule costs per month** and the **largest expenses**, each converted to one month. Tap to open the entry.

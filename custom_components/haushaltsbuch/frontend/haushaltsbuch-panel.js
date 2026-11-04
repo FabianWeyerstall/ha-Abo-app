@@ -1000,7 +1000,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos", tr("Einnahmen pro Monat minus Ausgaben pro Monat. So viel kannst du im Schnitt sparen.", "Income per month minus expenses per month: what you can save on average."))}
       ${tile(tr("Tiefster Stand (90 Tage)", "Lowest balance (90 days)"), lowest ? this._money(lowest.balance_likely) : "—", lowest ? fmtDate(lowest.date) : "", lowest && lowest.balance_likely < 0 ? "neg" : "", tr("Der niedrigste erwartete Kontostand in den nächsten 90 Tagen, meist kurz vor dem Gehalt.", "The lowest expected balance in the next 90 days, usually just before payday."))}
     </div></div>`;
-    return kpis + this._renderCategoryPie(rows) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
+    return kpis + this._renderCategoryPie(rows, monthlyIn) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
   }
 
   _showHelp(el) {
@@ -1081,7 +1081,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       </div>`;
   }
 
-  _renderCategoryPie(rows) {
+  _renderCategoryPie(rows, monthlyIn = 0) {
     if (!rows.length) return "";
     const totals = {};
     const details = {};
@@ -1125,6 +1125,10 @@ class HaushaltsbuchPanel extends HTMLElement {
           <svg viewBox="0 0 160 160" width="180" height="180" role="img" aria-label="${esc(parts.map((p) => `${p.label} ${Math.round((p.value / total) * 100)} %`).join(", "))}">${slices.join("")}</svg>
           <div class="pie-center"><small>${tr("pro Monat", "per month")}</small>${this._money(total)}</div>
         </div>
+        ${monthlyIn > 0 ? `<p class="hint income-share">${tr(
+          `Zusammen <b>${this._money(total)}</b> pro Monat, das sind <b>${Math.round((total / monthlyIn) * 100)} % deines Einkommens</b> (${this._money(monthlyIn)}). Die Prozente in der Liste sind Anteile an den Ausgaben.`,
+          `Together <b>${this._money(total)}</b> per month, that is <b>${Math.round((total / monthlyIn) * 100)} % of your income</b> (${this._money(monthlyIn)}). The percentages in the list are shares of spending.`
+        )}</p>` : ""}
         <div class="split-list pie-list">
           ${parts
             .map(
@@ -1132,12 +1136,20 @@ class HaushaltsbuchPanel extends HTMLElement {
                 <i class="swatch ${p.cls}"></i><div class="split-name">${esc(p.label)}</div>
                 <div class="split-value">${this._money(p.value)}<small>${Math.round((p.value / total) * 100)} %</small></div>
                 <span class="chevron">${open(p) ? "▾" : "▸"}</span>
-              </div>${open(p) ? this._renderDetails(p.details) : ""}`
+              </div>${open(p) ? this._renderDetails(p.details, { note: this._shareNote(p.value, total, monthlyIn) }) : ""}`
             )
             .join("")}
         </div>
       </div>
     </div>`;
+  }
+
+  // "47 % of your spending · 30 % of your income" for one opened part.
+  _shareNote(value, total, monthlyIn) {
+    const ofSpend = Math.round((value / total) * 100);
+    if (!(monthlyIn > 0)) return tr(`${ofSpend} % deiner Ausgaben`, `${ofSpend} % of your spending`);
+    const ofIncome = Math.round((value / monthlyIn) * 100);
+    return tr(`<b>${ofSpend} % deiner Ausgaben</b> · <b>${ofIncome} % deines Einkommens</b>`, `<b>${ofSpend} % of your spending</b> · <b>${ofIncome} % of your income</b>`);
   }
 
   _renderSpendSplit(rows, itemsById) {
@@ -2015,6 +2027,7 @@ const STYLES = `
   .detail-name small, .detail-value small { display: block; color: var(--secondary-text-color); font-size: 11px; }
   .detail-value { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .pie-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; margin-top: 8px; }
+  .pie-wrap .income-share { flex-basis: 100%; margin: 0; text-align: center; }
   .pie { position: relative; width: 180px; height: 180px; margin: 0 auto; flex-shrink: 0; }
   .pie svg path, .pie svg circle { stroke: var(--card-background-color, #fff); stroke-width: 2; stroke-linejoin: round; }
   .pie svg circle { stroke: currentColor; }
