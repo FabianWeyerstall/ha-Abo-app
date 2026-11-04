@@ -394,3 +394,22 @@ def test_budget_month_follows_salary_cycle():
     assert find(today) == (date(2026, 10, 29), date(2026, 11, 25))
     status = budget_status(b, today, find)
     assert status["spent"] == 100.0 and status["start"] == "2026-10-29"
+
+
+def test_zero_budget_counts_only_entered_spendings():
+    from custom_components.haushaltsbuch.engine import budget_amounts, budget_status, forecast, month_summaries
+    pot = item(
+        id="pot", amount=0.0, start_date="2026-01-01",
+        schedule={"frequency": "budget", "interval": 1},
+        spendings=[{"id": "a", "date": "2026-11-03", "amount": 45.0}],
+    )
+    today = date(2026, 11, 11)
+    assert budget_amounts(pot, date(2026, 11, 1), date(2026, 11, 30), today) == {date(2026, 11, 3): 45.0}
+    status = budget_status(pot, today)
+    assert status["budget"] == 0.0 and status["spent"] == 45.0
+    # Nothing is planned ahead: the balance only changes with real entries.
+    days = forecast([pot], today, today + timedelta(days=20), 1000.0, date(2026, 11, 1), today=today)
+    assert days[0].balance_likely == days[-1].balance_likely == 955.0  # the 45 € after the balance date, nothing more
+    rows = month_summaries([pot], date(2026, 11, 1), 2, today=today)
+    assert rows[0]["expense"] == 45.0 and rows[1]["expense"] == 0.0
+    assert all(e["amount"] for r in rows for e in r["entries"])

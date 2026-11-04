@@ -192,6 +192,7 @@ A budget such as “Groceries 600 € per month” starts as a placeholder: the 
 - **+ Spending** opens a small form: budget, amount, date and a note such as “weekly shop”. The **date** defaults to today; if you forgot something, just set it back. The spending counts in the month its date falls in.
 - Tap a budget to see all spendings of the month. Tap a spending to change its amount, date, note or budget. ✕ deletes it.
 - For the balance, past days count the real amounts and what is left of the budget is spread over the remaining days. At the end of the month the rest **expires**; the next month starts with the full budget again. If you are over, nothing more is taken off.
+- **Pot for unplanned purchases:** for things that cost 5 € one month and 50 € the next (e.g. something for the house), create a budget of **0**, easiest with the template **Unplanned**. Nothing is taken off in advance; only what you enter comes off the balance and counts in the figures. The card then shows “€45 spent” instead of a bar.
 - With the [salary month](#salary-at-the-end-of-the-month-salary-month) the budget month also runs from payday to payday.
 - For a budget in a shared household, every member can enter spendings.
 

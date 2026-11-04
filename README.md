@@ -192,6 +192,7 @@ Ein Budget wie „Lebensmittel 600 € pro Monat“ ist zuerst nur ein Platzhalt
 - **+ Ausgabe** öffnet ein kleines Formular: Budget, Betrag, Datum und eine Notiz wie „Wocheneinkauf“. Das **Datum** steht auf heute. Hast du etwas vergessen, stell es einfach zurück. Die Ausgabe zählt in dem Monat, in dem das Datum liegt.
 - Ein Budget antippen zeigt alle Ausgaben des Monats. Eine Ausgabe antippen öffnet sie zum Ändern: Betrag, Datum, Notiz oder ein anderes Budget. Mit ✕ löschst du sie.
 - Für den Kontostand zählen vergangene Tage mit den echten Beträgen. Was vom Budget übrig ist, wird auf die restlichen Tage verteilt. Am Monatsende **verfällt** der Rest, der neue Monat startet wieder mit dem vollen Budget. Bist du drüber, wird nichts mehr zusätzlich abgezogen.
+- **Sammeltopf für Ungeplantes:** Für Käufe, die mal 5 € und mal 50 € kosten (z.B. etwas fürs Haus), legst du ein Budget mit **0 €** an, am einfachsten mit der Vorlage **Ungeplantes**. Es zieht nichts im Voraus ab, nur was du einträgst, geht vom Kontostand ab und zählt in den Auswertungen. In der Karte steht dann „45 € ausgegeben“ statt eines Balkens.
 - Mit [Gehaltsmonat](#gehalt-am-monatsende-gehaltsmonat) läuft auch der Budget-Monat von Gehalt zu Gehalt.
 - Bei einem Budget im gemeinsamen Haushalt dürfen alle Mitglieder Ausgaben eintragen.
 
