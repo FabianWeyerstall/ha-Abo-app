@@ -30,7 +30,7 @@ All items are entered by hand. There is no bank connection, and the data stays i
 - **Certainty level** per booking: *certain*, *likely* or *uncertain*. It is derived from how much amount and date vary and whether recent bookings were confirmed on time. Can also be fixed per entry.
 - **Price changes**: a new amount from a given date; earlier bookings keep the old amount
 - **Contracts**: term, notice period and automatic renewal. The timeline tells you in time by when you have to cancel.
-- **Budgets** for variable spending such as groceries: a monthly amount that is spread evenly across the month. The timeline shows on each day, as its own row, how much budget was taken off since the previous day, so every daily balance adds up
+- **Budgets** for variable spending such as groceries: a monthly amount that is spread across the month. Enter **real spendings** one by one (also afterwards or with an iPhone shortcut) to see how much is left or whether you are over. The timeline shows on each day, as its own row, how much budget was taken off since the previous day, so every daily balance adds up
 - **Rolling entries learn** the real average interval after three confirmed bookings
 - **Fix a date** for a single booking. For rolling entries, all later dates move along; otherwise only this one booking moves.
 - **Confirm** due bookings as *booked* (optionally with the real date and amount) or *skipped*
@@ -126,7 +126,7 @@ Tab **Entries** → **+ New entry**.
    - *fixed dates each year*: several dates per year, e.g. tyre change in April and October
    - *rolling*: the next date follows the last one, e.g. hairdresser or fuel
    - *once*: e.g. a bonus or an invoice
-   - *monthly budget*: for spending without fixed dates, e.g. groceries. No single bookings; the budget is spread evenly over the month.
+   - *monthly budget*: for spending without fixed dates, e.g. groceries. No fixed bookings; the budget is spread over the month. Enter what you really spend one by one (see [Budgets and real spendings](#budgets-and-real-spendings)).
 4. Optionally **set an end date**, e.g. when a loan ends.
 5. For income such as your salary: tick **"My month starts with this income"** if the salary arrives at the end of the month and pays the next month's debits. Months then run from payday to payday (see [Salary at the end of the month](#salary-at-the-end-of-the-month-salary-month)).
 6. Under **Variation and certainty**: amount variance in %, date tolerance, fixed certainty level and weekend behaviour.
@@ -180,6 +180,39 @@ What changes:
 - **Timeline and calendar** stay as they are. The calendar keeps normal calendar months.
 
 Only one income can carry the tick, and it applies to you personally. Untick it and the app goes back to calendar months.
+
+### Budgets and real spendings
+
+A budget such as “Groceries 600 € per month” starts as a placeholder: the app takes it off the expected balance evenly across the month. Enter what you really spend and it becomes a real overview.
+
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/en/15-budget.png" alt="Budgets this month with spendings" width="260">
+
+- At the top of the **Timeline** and the **Overview** is the card **Budgets this month**. For each budget: how much is gone, how much is left and what that means per day until the month ends.
+- **Green bar:** on track. **Orange:** spent faster than planned. The line in the bar shows how much would be due by today if spread evenly. **Red:** over budget, e.g. “68 € over”.
+- **+ Spending** opens a small form: budget, amount, date and a note such as “weekly shop”. The **date** defaults to today; if you forgot something, just set it back. The spending counts in the month its date falls in.
+- Tap a budget to see all spendings of the month. ✕ deletes one, e.g. after a typo.
+- For the balance, past days count the real amounts and what is left of the budget is spread over the remaining days. At the end of the month the rest **expires**; the next month starts with the full budget again. If you are over, nothing more is taken off.
+- With the [salary month](#salary-at-the-end-of-the-month-salary-month) the budget month also runs from payday to payday.
+- For a budget in a shared household, every member can enter spendings.
+
+#### Add a spending with a shortcut
+
+For quick entry at the checkout there is the action **“Haushaltsbuch: Add expense”** (`haushaltsbuch.add_expense`):
+
+| Field | Meaning |
+|---|---|
+| `budget` | Name of the budget, e.g. `Groceries` (case doesn't matter). Can be left out if you only have one budget. |
+| `amount` | Amount, e.g. `34.90` |
+| `date` | optional, e.g. `2026-11-02`. Default: today. |
+| `note` | optional, e.g. `weekly shop` |
+
+The action responds with the new state (`budget`, `spent`, `rest`, `days_left`). On the iPhone in the **Shortcuts** app:
+
+1. New shortcut → **Ask for Input** (number, “Amount?”)
+2. Action **Home Assistant → Perform Action**, action `haushaltsbuch.add_expense`, data e.g. `{"budget": "Groceries", "amount": <input>}`
+3. Optionally **Show Notification** with the result to see right away how much is left.
+
+You can test the action under **Developer tools → Actions**. The spending is assigned to the user who runs the action.
 
 ### 3. Reading the timeline
 
@@ -283,7 +316,7 @@ The eye icon in the top bar blurs all amounts and balances, including in forms. 
 - **Confirming pays off.** Without confirmations everything stays *likely* and rolling items cannot learn.
 - **Use price changes** instead of overwriting the amount.
 - **"Skipped" means it does not happen at all.** For "arrives later", leave it open or fix a date.
-- **Irregular spending** such as groceries works best as a **monthly budget**.
+- **Irregular spending** such as groceries works best as a **monthly budget**, with the real spendings entered in it.
 - **Privacy:** private entries are only visible to their owner. Household calendar and sensors are visible to all HA users and therefore off by default.
 - **Updates:** if an update only changes the user interface, reloading the page is enough (the companion app may need its frontend cache cleared). If the background logic changes, Home Assistant needs a restart; HACS will tell you.
 

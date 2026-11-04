@@ -4,3 +4,24 @@ send_contract_reminders:
       default: false
       selector:
         boolean:
+add_expense:
+  fields:
+    budget:
+      example: Lebensmittel
+      selector:
+        text:
+    amount:
+      required: true
+      example: 47.80
+      selector:
+        number:
+          min: 0.01
+          max: 100000
+          step: 0.01
+          mode: box
+    date:
+      selector:
+        date:
+    note:
+      selector:
+        text:

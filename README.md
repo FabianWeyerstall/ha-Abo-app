@@ -29,7 +29,7 @@ Alle Posten werden von Hand erfasst. Es gibt keine Bankanbindung, und die Daten 
 - **Sicherheitsstufe** pro Buchung: *sicher*, *wahrscheinlich* oder *unsicher*. Sie ergibt sich aus Schwankung von Betrag und Datum und daraus, ob die letzten Buchungen pünktlich bestätigt wurden. Pro Posten auch fest einstellbar.
 - **Preisänderungen**: neuer Betrag ab einem Datum, frühere Buchungen behalten den alten Betrag
 - **Verträge**: Laufzeit, Kündigungsfrist und automatische Verlängerung. Die Zeitleiste zeigt rechtzeitig, bis wann du kündigen musst.
-- **Budgets** für variable Ausgaben wie Lebensmittel oder Freizeit: ein Monatsbetrag, der gleichmäßig über den Monat vom erwarteten Kontostand abgeht. In der Zeitleiste steht an jedem Tag als eigene Zeile, wie viel Budget seit dem letzten Tag abgezogen wurde, damit jeder Tagessaldo aufgeht
+- **Budgets** für variable Ausgaben wie Lebensmittel oder Freizeit: ein Monatsbetrag, der über den Monat verteilt vom erwarteten Kontostand abgeht. **Echte Ausgaben** trägst du einzeln ein (auch nachträglich oder per iPhone-Kurzbefehl), dann siehst du, wie viel noch übrig ist oder ob du drüber bist. In der Zeitleiste steht an jedem Tag als eigene Zeile, wie viel Budget seit dem letzten Tag abgezogen wurde, damit jeder Tagessaldo aufgeht
 - **Gleitende Posten lernen** ab drei bestätigten Terminen den echten durchschnittlichen Abstand
 - **Termin festlegen**: Datum und Betrag einer einzelnen Buchung festlegen. Bei gleitenden Posten rücken alle weiteren Termine nach, sonst wird nur diese eine Buchung verschoben.
 - **Bestätigen**: Fällige Buchungen als „gebucht“ (optional mit echtem Datum und Betrag) oder „ausgefallen“ markieren
@@ -123,7 +123,7 @@ Tab **Posten** → **+ Neuer Posten**.
    - *feste Termine im Jahr*: mehrere Daten pro Jahr, z.B. Räderwechsel im April und Oktober
    - *gleitend*: der nächste Termin richtet sich nach dem letzten, z.B. Friseur oder Tanken
    - *einmalig*: z.B. Bonus oder eine Rechnung
-   - *Budget pro Monat*: für Ausgaben ohne feste Termine, z.B. Lebensmittel. Keine einzelnen Buchungen, das Budget wird gleichmäßig über den Monat verteilt.
+   - *Budget pro Monat*: für Ausgaben ohne feste Termine, z.B. Lebensmittel. Keine festen Buchungen, das Budget wird über den Monat verteilt. Was du wirklich ausgibst, trägst du einzeln ein (siehe [Budgets und echte Ausgaben](#budgets-und-echte-ausgaben)).
 4. Optional ein **Enddatum** setzen (Häkchen „Enddatum festlegen“), z.B. wenn ein Kredit ausläuft.
 5. Bei einer Einnahme wie dem Gehalt: Häkchen **„Mein Monat beginnt mit dieser Einnahme“**, wenn das Gehalt am Monatsende kommt und die Abbuchungen des Folgemonats bezahlt. Dann laufen Monatsübersicht und Übersicht von Gehalt zu Gehalt (siehe [Gehalt am Monatsende](#gehalt-am-monatsende-gehaltsmonat)).
 6. Unter **Schwankung und Sicherheit**: Schwankung des Betrags in %, Toleranz beim Datum, feste Sicherheitsstufe und das Verhalten am Wochenende.
@@ -180,6 +180,39 @@ Was sich dadurch ändert:
 - **Zeitleiste und Kalender** bleiben, wie sie sind. Der Kalender zeigt weiter normale Kalendermonate.
 
 Das Häkchen kann immer nur eine Einnahme haben und gilt für dich persönlich. Nimmst du es wieder raus, rechnet die App wieder in Kalendermonaten.
+
+### Budgets und echte Ausgaben
+
+Ein Budget wie „Lebensmittel 600 € pro Monat“ ist zuerst nur ein Platzhalter: Die App zieht es gleichmäßig über den Monat vom erwarteten Kontostand ab. Trägst du ein, was du wirklich ausgibst, wird daraus ein echter Überblick.
+
+<img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/15-budget.png" alt="Budgets diesen Monat mit eingetragenen Ausgaben" width="260">
+
+- Oben in der **Zeitleiste** und in der **Übersicht** steht die Karte **Budgets diesen Monat**. Pro Budget: wie viel schon weg ist, wie viel noch übrig ist und wie viel das pro Tag bis zum Monatsende macht.
+- **Grüner Balken:** alles im Plan. **Orange:** schneller ausgegeben als geplant. Der Strich im Balken zeigt, wie viel bis heute gleichmäßig verteilt dran wäre. **Rot:** Budget überzogen, dort steht dann z.B. „68 € drüber“.
+- **+ Ausgabe** öffnet ein kleines Formular: Budget, Betrag, Datum und eine Notiz wie „Wocheneinkauf“. Das **Datum** steht auf heute. Hast du etwas vergessen, stell es einfach zurück. Die Ausgabe zählt in dem Monat, in dem das Datum liegt.
+- Ein Budget antippen zeigt alle Ausgaben des Monats. Mit ✕ löschst du eine Ausgabe, z.B. nach einem Tippfehler.
+- Für den Kontostand zählen vergangene Tage mit den echten Beträgen. Was vom Budget übrig ist, wird auf die restlichen Tage verteilt. Am Monatsende **verfällt** der Rest, der neue Monat startet wieder mit dem vollen Budget. Bist du drüber, wird nichts mehr zusätzlich abgezogen.
+- Mit [Gehaltsmonat](#gehalt-am-monatsende-gehaltsmonat) läuft auch der Budget-Monat von Gehalt zu Gehalt.
+- Bei einem Budget im gemeinsamen Haushalt dürfen alle Mitglieder Ausgaben eintragen.
+
+#### Ausgabe per Kurzbefehl eintragen
+
+Für schnelles Eintragen an der Kasse gibt es die Aktion **„Haushaltsbuch: Ausgabe erfassen“** (`haushaltsbuch.add_expense`):
+
+| Feld | Bedeutung |
+|---|---|
+| `budget` | Name des Budgets, z.B. `Lebensmittel` (Groß-/Kleinschreibung egal). Hast du nur ein Budget, kannst du es weglassen. |
+| `amount` | Betrag, z.B. `34.90` |
+| `date` | optional, z.B. `2026-11-02`. Ohne Angabe: heute. |
+| `note` | optional, z.B. `Wocheneinkauf` |
+
+Die Aktion antwortet mit dem neuen Stand (`budget`, `spent`, `rest`, `days_left`). Auf dem iPhone in der App **Kurzbefehle**:
+
+1. Neuer Kurzbefehl → **Nach Eingabe fragen** (Zahl, „Betrag?“)
+2. Aktion **Home Assistant → Aktion ausführen** (im Englischen „Call Service“/„Perform Action“), Aktion `haushaltsbuch.add_expense`, als Daten z.B. `{"budget": "Lebensmittel", "amount": <Eingabe>}`
+3. Optional **Mitteilung zeigen** mit dem Ergebnis, dann siehst du direkt, wie viel noch übrig ist.
+
+Testen kannst du die Aktion unter **Entwicklerwerkzeuge → Aktionen**. Die Ausgabe wird dem Nutzer zugeordnet, der die Aktion auslöst.
 
 ### 3. Die Zeitleiste lesen
 
@@ -293,7 +326,7 @@ Das Auge oben in der Leiste macht alle Beträge und Kontostände unscharf, auch 
 - **Bestätigen lohnt sich.** Ohne Bestätigungen bleibt alles *wahrscheinlich*, und gleitende Posten können nichts lernen.
 - **Preisänderung statt Betrag überschreiben**, damit alte Buchungen ihren alten Betrag behalten.
 - **„Ausgefallen“ heißt: kommt diesmal gar nicht.** Für „kommt später“ die Buchung offen lassen oder einen Termin festlegen.
-- **Unregelmäßige Ausgaben** wie Lebensmittel oder Freizeit am besten als **Budget pro Monat** erfassen statt als viele einzelne Posten.
+- **Unregelmäßige Ausgaben** wie Lebensmittel oder Freizeit am besten als **Budget pro Monat** erfassen statt als viele einzelne Posten, und die echten Ausgaben darin eintragen.
 - **Privatsphäre:** Private Posten sieht nur ihr Besitzer, auch HA-Admins nicht. Kalender und Sensoren eines Haushalts sind dagegen für alle HA-Nutzer sichtbar und deshalb standardmäßig aus.
 - **Sprache:** Die Oberfläche richtet sich nach der Sprache in deinem HA-Profil: Deutsch bei Deutsch, sonst Englisch. Für englische Push-Nachrichten gibt es den Blueprint `contract_reminder.yaml`.
 - **Updates:** Betrifft ein Update nur die Oberfläche, reicht es, die Seite neu zu laden (in der iPhone-App eventuell den Frontend-Cache leeren). Ändert sich die Berechnung im Hintergrund, braucht Home Assistant einen Neustart. HACS weist dann darauf hin.

@@ -5,7 +5,7 @@ connection, so a user only ever reaches their own data and their households.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from functools import wraps
 from typing import Any, Callable
 
@@ -16,8 +16,11 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import DEFAULT_CATEGORIES, DEFAULT_CATEGORIES_EN, DOMAIN, TEMPLATES, TEMPLATES_EN
 from .engine import (
+    FREQ_BUDGET,
     amount_on,
+    budget_status,
     contract_info,
+    period_finder,
     forecast,
     learned_interval_days,
     month_summaries,
@@ -47,6 +50,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_export,
         ws_import,
         ws_settings,
+        ws_add_spending,
+        ws_delete_spending,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -83,6 +88,14 @@ async def _user_names(hass: HomeAssistant) -> dict[str, str]:
     }
 
 
+def _finder(data, user_id: str, items, today: date, months: int = 13):
+    """Budget months for this user: payday to payday when a salary is set."""
+    salary = (data.book.user(user_id).get("settings") or {}).get("salary_item_id")
+    return period_finder(
+        items, salary, today - timedelta(days=62), today + timedelta(days=31 * (months + 1))
+    )
+
+
 def _scope_items(data, user_id: str, scope: str):
     book = data.book
     if scope == SCOPE_ME:
@@ -112,15 +125,21 @@ async def ws_state(hass, connection, msg, data):
         if not user.system_generated and user.is_active
     ]
     items = []
+    finder = _finder(data, user_id, book.visible_items(user_id), today, 1)
     for item in book.visible_items(user_id):
         items.append(
             {
-                **{k: v for k, v in item.items() if k != "confirmations"},
+                **{k: v for k, v in item.items() if k not in ("confirmations", "spendings")},
                 "owner_name": names.get(item["owner"], "?"),
                 "editable": item["owner"] == user_id,
                 "current_amount": amount_on(item, today),
                 "contract_info": contract_info(item, today),
                 "learned_days": learned_interval_days(item),
+                **(
+                    {"budget_status": budget_status(item, today, finder)}
+                    if (item.get("schedule") or {}).get("frequency") == FREQ_BUDGET
+                    else {}
+                ),
             }
         )
     households = [
@@ -167,7 +186,12 @@ async def ws_forecast(hass, connection, msg, data):
         raise ValidationError("range")
     items, balance, balance_date = _scope_items(data, connection.user.id, msg["scope"])
     names = await _user_names(hass)
-    days = [day.as_dict() for day in forecast(items, start, end, balance, parse_date(balance_date))]
+    today = date.today()
+    finder = _finder(data, connection.user.id, items, min(today, start), max(1, (end - today).days // 28 + 1))
+    days = [
+        day.as_dict()
+        for day in forecast(items, start, end, balance, parse_date(balance_date), today, finder)
+    ]
     for day in days:
         for entry in day["entries"]:
             entry["owner_name"] = names.get(entry["owner"], "?")
@@ -188,7 +212,9 @@ async def ws_summary(hass, connection, msg, data):
     items, _, _ = _scope_items(data, user_id, msg["scope"])
     salary = (data.book.user(user_id).get("settings") or {}).get("salary_item_id")
     periods = salary_periods(items, salary, date.today(), msg["months"])
-    return (month_summaries(items, date.today(), msg["months"], periods), False)
+    today = date.today()
+    finder = _finder(data, user_id, items, today, msg["months"])
+    return (month_summaries(items, today, msg["months"], periods, today, finder), False)
 
 
 # --------------------------------------------------------------------- write
@@ -366,4 +392,38 @@ async def ws_import(hass, connection, msg, data):
 @_handler
 async def ws_settings(hass, connection, msg, data):
     data.book.set_user_settings(connection.user.id, msg["settings"])
+    return (None, True)
+
+
+# ----------------------------------------------------------------- budgets
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/spending/add",
+        vol.Required("item_id"): str,
+        vol.Required("date"): str,
+        vol.Required("amount"): vol.Coerce(float),
+        vol.Optional("note"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+@_handler
+async def ws_add_spending(hass, connection, msg, data):
+    spending_id = data.book.add_spending(
+        connection.user.id, msg["item_id"], msg["date"], msg["amount"], msg.get("note")
+    )
+    return ({"id": spending_id}, True)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/spending/delete",
+        vol.Required("item_id"): str,
+        vol.Required("spending_id"): str,
+    }
+)
+@websocket_api.async_response
+@_handler
+async def ws_delete_spending(hass, connection, msg, data):
+    data.book.delete_spending(connection.user.id, msg["item_id"], msg["spending_id"])
     return (None, True)

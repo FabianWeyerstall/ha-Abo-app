@@ -688,16 +688,95 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (!g) return "";
     const budgets = this._scopeItems().filter((i) => i.schedule?.frequency === "budget" && i.start_date <= g.to && (!i.end_date || i.end_date >= g.from));
     const names = budgets.map((i) => i.name).join(", ");
-    const span = g.n === 1 ? tr("1 Tag anteilig", "1 day pro rata") : tr(`${g.n} Tage anteilig, ${shortDay(g.from)}–${shortDay(g.to)}`, `${g.n} days pro rata, ${shortDay(g.from)}–${shortDay(g.to)}`);
+    const span = g.n === 1 ? tr("1 Tag", "1 day") : tr(`${g.n} Tage, ${shortDay(g.from)}–${shortDay(g.to)}`, `${g.n} days, ${shortDay(g.from)}–${shortDay(g.to)}`);
     const one = budgets.length === 1 ? budgets[0] : null;
     return `<div class="entry budget-row" ${one ? `data-action="edit-item" data-item="${esc(one.id)}"` : ""}>
       <div class="entry-icon">${this._icon(one?.icon || "mdi:wallet-outline")}</div>
       <div class="entry-main">
         <div class="entry-name">${tr("Budget", "Budget")}${names ? `: ${esc(names)}` : ""}</div>
-        <div class="entry-meta">${span} <span class="chip budget">Budget</span>${this._help(tr("Budgets wie Lebensmittel haben keine festen Termine. Die App zieht sie gleichmäßig über den Monat verteilt jeden Tag ein Stück vom erwarteten Kontostand ab. Hier steht, wie viel davon seit dem letzten Tag in der Liste abgezogen wurde.", "Budgets such as groceries have no fixed dates. The app takes them off the expected balance a little every day, spread evenly over the month. This row shows how much was taken off since the previous day in the list."))}</div>
+        <div class="entry-meta">${span} <span class="chip budget">Budget</span>${this._help(tr("Budgets wie Lebensmittel haben keine festen Termine. Die App zieht jeden Tag ein Stück vom erwarteten Kontostand ab: Was vom Budget noch übrig ist, verteilt auf die restlichen Tage des Monats. Trägst du Ausgaben ein, zählen für vergangene Tage die echten Beträge. Hier steht, wie viel seit dem letzten Tag in der Liste abgezogen wurde.", "Budgets such as groceries have no fixed dates. The app takes a little off the expected balance every day: what is left of the budget, spread over the remaining days of the month. Once you enter spendings, past days count the real amounts. This row shows how much was taken off since the previous day in the list."))}</div>
       </div>
       <div class="entry-amount ${g.sum < 0 ? "neg" : "pos"}">${this._money(g.sum, true)}</div>
     </div>`;
+  }
+
+  /** Budgets of the current scope that are running this month. */
+  _budgets() {
+    return this._scopeItems().filter((i) => i.schedule?.frequency === "budget" && i.direction === "expense" && i.budget_status && (i.budget_status.budget > 0 || i.budget_status.spent > 0)).sort((a, b) => b.budget_status.budget - a.budget_status.budget);
+  }
+
+  _renderBudgetCard() {
+    const budgets = this._budgets();
+    if (!budgets.length) return "";
+    const s0 = budgets[0].budget_status;
+    const period = this._salaryItem() ? ` <small class="period">${shortDay(s0.start)}–${shortDay(s0.end)}</small>` : "";
+    return `<div class="card budgets">
+      <div class="row-between">
+        <h3>${tr("Budgets diesen Monat", "Budgets this month")}${period}${this._help(tr("Trag hier ein, was du wirklich ausgibst. Der Balken zeigt, wie viel vom Budget weg ist, der Strich, wie viel bis heute gleichmäßig verteilt dran wäre. Orange heißt: schneller ausgegeben als geplant. Rot heißt: Budget überzogen. Was am Monatsende übrig ist, verfällt, der neue Monat startet wieder mit dem vollen Budget.", "Enter what you really spend. The bar shows how much of the budget is gone, the line how much would be due by today if spread evenly. Orange means faster than planned, red means over budget. Whatever is left at the end of the month expires; the next month starts with the full budget again."))}</h3>
+        <button class="small" data-action="spending-new">+ ${tr("Ausgabe", "Spending")}</button>
+      </div>
+      ${budgets.map((i) => this._renderBudgetBar(i)).join("")}
+    </div>`;
+  }
+
+  _renderBudgetBar(i, { list = true } = {}) {
+    const s = i.budget_status;
+    const over = s.rest < -0.005;
+    const ahead = !over && s.spent > s.planned_by_today + 0.005;
+    const pct = s.budget > 0 ? Math.min(100, (s.spent / s.budget) * 100) : 100;
+    const mark = s.budget > 0 ? Math.min(100, (s.planned_by_today / s.budget) * 100) : 0;
+    const open = list && this._budgetOpen === i.id;
+    const sub = over
+      ? tr(`${this._money(-s.rest)} drüber`, `${this._money(-s.rest)} over`)
+      : s.days_left > 1
+        ? tr(`noch ${this._money(s.rest)} für ${s.days_left} Tage, etwa ${this._money(s.rest / s.days_left)} am Tag`, `${this._money(s.rest)} left for ${s.days_left} days, about ${this._money(s.rest / s.days_left)} a day`)
+        : tr(`noch ${this._money(s.rest)}`, `${this._money(s.rest)} left`);
+    const users = Object.fromEntries((this._state.users || []).map((u) => [u.id, u.name]));
+    const rows = s.spendings.length
+      ? s.spendings
+          .map(
+            (x) => `<div class="spending">
+              <span class="spending-date">${shortDay(x.date)}</span>
+              <span class="spending-note">${esc(x.note || tr("Ausgabe", "Spending"))}${this._isHousehold() && users[x.by] ? ` <span class="owner">${esc(users[x.by])}</span>` : ""}</span>
+              <span class="spending-amount neg">${this._money(-x.amount)}</span>
+              <button class="icon-button small-x" data-action="spending-delete" data-item="${esc(i.id)}" data-id="${esc(x.id)}" aria-label="${tr("Ausgabe löschen", "Delete spending")}">✕</button>
+            </div>`
+          )
+          .join("")
+      : `<p class="hint">${tr("Noch nichts eingetragen. Bis dahin rechnet die App mit dem vollen Budget, gleichmäßig verteilt.", "Nothing entered yet. Until then the app counts the full budget, spread evenly.")}</p>`;
+    return `<div class="budget-block">
+      <div class="budget-line" ${list ? `data-action="budget-toggle" data-item="${esc(i.id)}" aria-expanded="${open}"` : ""}>
+        <div class="entry-icon">${this._icon(i.icon || "mdi:wallet-outline")}</div>
+        <div class="budget-main">
+          <div class="budget-head"><span class="entry-name">${esc(i.name)}</span><span class="budget-figures">${this._money(s.spent)} ${tr("von", "of")} ${this._money(s.budget)}</span></div>
+          <div class="budget-bar ${over ? "over" : ahead ? "ahead" : ""}"><span style="width:${pct}%"></span><i style="left:${mark}%"></i></div>
+          <div class="budget-sub ${over ? "neg" : ""}">${sub}${list ? ` · ${s.spendings.length === 1 ? tr("1 Eintrag", "1 entry") : tr(`${s.spendings.length} Einträge`, `${s.spendings.length} entries`)} <span class="chev">${open ? "▴" : "▾"}</span>` : ""}</div>
+        </div>
+      </div>
+      ${open ? `<div class="spendings">${rows}<button class="secondary small" data-action="spending-new" data-item="${esc(i.id)}">+ ${tr(`Ausgabe für ${esc(i.name)}`, `Spending for ${esc(i.name)}`)}</button></div>` : ""}
+    </div>`;
+  }
+
+  _renderSpendingForm(d) {
+    const budgets = this._budgets();
+    const chosen = budgets.find((i) => i.id === d.item_id) || budgets[0];
+    return `<form data-form="spending">
+      <h2>${tr("Ausgabe erfassen", "Add spending")}</h2>
+      <div class="grid">
+        ${budgets.length > 1
+          ? `<label class="full">${tr("Budget", "Budget")}<select name="item_id">${budgets.map((i) => `<option value="${esc(i.id)}" ${i.id === chosen.id ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select></label>`
+          : `<input type="hidden" name="item_id" value="${esc(chosen?.id || "")}"><p class="hint full">${tr("Budget", "Budget")}: <b>${esc(chosen?.name || "")}</b></p>`}
+        <label>${tr("Betrag", "Amount")} (${esc(this._state.currency)})<input name="amount" ${this._amountAttrs()} required autofocus></label>
+        <label>${tr("Datum", "Date")}<input name="date" type="date" required value="${esc(d.date || iso(today()))}"></label>
+        <label class="full">${tr("Notiz", "Note")}<input name="note" maxlength="200" placeholder="${tr("z.B. Wocheneinkauf", "e.g. weekly shop")}"></label>
+      </div>
+      <p class="hint">${tr("Vergessen einzutragen? Stell einfach das Datum zurück. Die Ausgabe zählt in dem Monat, in dem das Datum liegt.", "Forgot to enter something? Just set the date back. The spending counts in the month its date falls in.")}</p>
+      ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
+      <div class="dialog-actions"><span></span><div>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit">${tr("Speichern", "Save")}</button>
+      </div></div>
+    </form>`;
   }
 
   _renderTimeline() {
@@ -751,13 +830,13 @@ class HaushaltsbuchPanel extends HTMLElement {
     const budgetMonthly = this._scopeItems()
       .filter((i) => i.schedule?.frequency === "budget" && i.direction === "expense" && (!i.end_date || i.end_date >= iso(today())))
       .reduce((a, i) => a + Number(i.current_amount ?? i.amount), 0);
-    return `${pending}${deadlineCard}
+    return `${this._renderBudgetCard()}${pending}${deadlineCard}
       <div class="card">
         <div class="row-between">
           <h3>${tr(`Die nächsten ${this._range} Tage`, `Next ${this._range} days`)}</h3>
           <div class="segmented">${ranges.map((r) => `<button class="${r === this._range ? "active" : ""}" data-action="range" data-range="${r}">${r} ${tr("Tage", "days")}</button>`).join("")}</div>
         </div>
-        <p class="hint">${tr("Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.", "Next to each day is the expected balance with certain and likely entries. Uncertain entries are shown but not counted.")}${budgetMonthly ? tr(` Budgets (${this._money(budgetMonthly)} pro Monat) sind gleichmäßig auf die Tage verteilt eingerechnet.`, ` Budgets (${this._money(budgetMonthly)} per month) are spread evenly across the days.`) : ""}</p>
+        <p class="hint">${tr("Rechts neben jedem Tag steht der erwartete Kontostand mit sicheren und wahrscheinlichen Posten. Unsichere Posten werden gezeigt, aber nicht eingerechnet.", "Next to each day is the expected balance with certain and likely entries. Uncertain entries are shown but not counted.")}${budgetMonthly ? tr(` Budgets (${this._money(budgetMonthly)} pro Monat) sind eingerechnet: was noch übrig ist, verteilt auf die restlichen Tage.`, ` Budgets (${this._money(budgetMonthly)} per month) are included: what is left, spread over the remaining days.`) : ""}</p>
         ${list}
       </div>`;
   }
@@ -1000,7 +1079,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${tile(tr("Bleibt pro Monat", "Left per month"), this._money(free, true), monthlyIn > 0 ? tr(`${Math.round((free / monthlyIn) * 100)} % der Einnahmen`, `${Math.round((free / monthlyIn) * 100)} % of income`) : "", free < 0 ? "neg" : "pos", tr("Einnahmen pro Monat minus Ausgaben pro Monat. So viel kannst du im Schnitt sparen.", "Income per month minus expenses per month: what you can save on average."))}
       ${tile(tr("Tiefster Stand (90 Tage)", "Lowest balance (90 days)"), lowest ? this._money(lowest.balance_likely) : "—", lowest ? fmtDate(lowest.date) : "", lowest && lowest.balance_likely < 0 ? "neg" : "", tr("Der niedrigste erwartete Kontostand in den nächsten 90 Tagen, meist kurz vor dem Gehalt.", "The lowest expected balance in the next 90 days, usually just before payday."))}
     </div></div>`;
-    return kpis + this._renderCategoryPie(rows, monthlyIn) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
+    return kpis + this._renderBudgetCard() + this._renderCategoryPie(rows, monthlyIn) + this._renderSpendSplit(rows, itemsById) + this._renderCertaintySplit(rows) + this._renderFrequencySplit(active) + this._renderTopItems(active) + this._renderUpcomingSpecials(rows, itemsById);
   }
 
   _showHelp(el) {
@@ -1318,6 +1397,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (d.type === "household") body = this._renderHouseholdForm(d);
     if (d.type === "import") body = this._renderImportForm(d);
     if (d.type === "notice") body = this._renderNotice(d);
+    if (d.type === "spending") body = this._renderSpendingForm(d);
     return `<div class="overlay" data-action="close-overlay"><div class="dialog" role="dialog" aria-modal="true">${body}</div></div>`;
   }
 
@@ -1342,6 +1422,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <h2>${readOnly ? esc(item.name) : item.id ? tr("Posten bearbeiten", "Edit entry") : tr("Neuer Posten", "New entry")}</h2>
       ${readOnly ? `<p class="hint">${tr(`Dieser Posten gehört ${esc(item.owner_name)} und kann nur von dort geändert werden.`, `This entry belongs to ${esc(item.owner_name)} and can only be changed by them.`)}</p>` : ""}
       ${templates}
+      ${item.id && preset === "budget" && item.budget_status ? `<div class="budget-in-form">${this._renderBudgetBar(item, { list: false })}<button type="button" class="small" data-action="spending-new" data-item="${esc(item.id)}">+ ${tr("Ausgabe erfassen", "Add spending")}</button></div>` : ""}
       <div class="grid">
         <label class="full">${tr("Name", "Name")}<input name="name" required maxlength="100" value="${esc(item.name)}" ${dis}></label>
         <label>${tr("Art", "Type")}<select name="direction" data-change="direction" ${dis}>
@@ -1367,7 +1448,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label class="check full"><input type="checkbox" name="learn" ${item.schedule?.learn !== false ? "checked" : ""} ${dis}> ${tr("Abstand aus bestätigten Terminen lernen", "Learn the interval from confirmed dates")}${item.learned_days ? tr(` (zurzeit ~${item.learned_days} Tage)`, ` (currently ~${item.learned_days} days)`) : ""}</label>
         <p class="hint full">${tr("Der nächste Termin richtet sich nach dem letzten. Ab drei bestätigten Terminen rechnet die App mit deinem echten durchschnittlichen Abstand. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.", "The next date follows the last one. From three confirmed dates on, the app uses your real average interval. Tap an entry in the timeline to set a fixed date; all later ones move along.")}</p>` : ""}
         ${preset === "weekly" ? `<label>${tr("Alle wie viele Wochen?", "Every how many weeks?")}<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
-        ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird gleichmäßig über die Tage des Monats vom erwarteten Kontostand abgezogen und erscheint in der Monatsübersicht, aber nicht als einzelne Buchung.", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance evenly across the days of the month and shows up in the monthly overview, but not as single bookings.")}</p>` : ""}
+        ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird über die Tage des Monats verteilt vom erwarteten Kontostand abgezogen. Trägst du echte Ausgaben ein (unter „Budgets diesen Monat“ oder per Aktion haushaltsbuch.add_expense), wird der Rest kleiner. Was übrig bleibt, verfällt am Monatsende.", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance spread over the days of the month. When you enter real spendings (under “Budgets this month” or with the action haushaltsbuch.add_expense), the rest shrinks. Whatever is left expires at the end of the month.")}</p>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">${tr("Termine im Jahr (TT.MM., durch Komma getrennt)", "Dates each year (DD.MM., comma separated)")}<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
         <label>${preset === "once" ? tr("Datum", "Date") : preset === "fixed_dates" || preset === "budget" || preset === "monthly_weekday" ? tr("Gültig ab", "Valid from") : preset === "rolling" ? tr("Erster Termin", "First date") : tr("Erste Fälligkeit", "First due date")}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
@@ -1657,7 +1738,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (kind === "item") {
       const item = this._readItemForm(form);
       const salaryBox = form.querySelector('[name="salary_cycle"]');
-      const { editable, owner_name, owner, current_amount, contract_info, learned_days, ...payload } = item;
+      const { editable, owner_name, owner, current_amount, contract_info, learned_days, budget_status, ...payload } = item;
       this._run(async () => {
         const saved = editable === false ? { id: item.id } : await this._ws("item/save", { item: payload });
         const st = this._state.user.settings || {};
@@ -1690,6 +1771,9 @@ class HaushaltsbuchPanel extends HTMLElement {
           this._render();
         });
       });
+    } else if (kind === "spending") {
+      const f = new FormData(form);
+      this._run(() => this._ws("spending/add", { item_id: f.get("item_id"), date: f.get("date"), amount: this._parsedAmount(f.get("amount")), note: f.get("note") || null }));
     } else if (kind === "household") {
       const f = new FormData(form);
       const members = f.getAll("members");
@@ -1948,6 +2032,18 @@ class HaushaltsbuchPanel extends HTMLElement {
       case "reset-confirm":
         this._run(() => this._ws("confirm", { item_id: this._dialog.item_id, due_date: this._dialog.due, status: null }));
         break;
+      case "budget-toggle":
+        this._budgetOpen = this._budgetOpen === target.dataset.item ? null : target.dataset.item;
+        this._render();
+        break;
+      case "spending-new":
+        this._error = null;
+        this._dialog = { type: "spending", item_id: target.dataset.item || null };
+        this._render();
+        break;
+      case "spending-delete":
+        if (confirm(tr("Diese Ausgabe löschen?", "Delete this spending?"))) this._run(() => this._ws("spending/delete", { item_id: target.dataset.item, spending_id: target.dataset.id }));
+        break;
       case "new-household":
         this._dialog = { type: "household", household: null };
         this._render();
@@ -2049,6 +2145,31 @@ const STYLES = `
   .entry { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; border-radius: 8px; flex-wrap: wrap; }
   .entry:hover { background: var(--secondary-background-color); }
   .entry.budget-row { opacity: 0.8; }
+  .budgets h3 .period, .budgets h3 small { font-size: 12px; color: var(--secondary-text-color); font-weight: 400; margin-left: 4px; }
+  .budget-block { border-top: 1px solid var(--divider-color); padding: 10px 0 4px; }
+  .budgets .row-between + .budget-block { border-top: none; }
+  .budget-sub { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; }
+  .budget-sub.neg { color: var(--error-color, #db4437); }
+  .budget-sub .chev { font-size: 10px; }
+  .budget-line { display: flex; gap: 12px; align-items: flex-start; }
+  .budget-line[data-action] { cursor: pointer; }
+  .budget-main { flex: 1; min-width: 0; }
+  .budget-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .budget-figures { font-size: 14px; white-space: nowrap; }
+  .budget-bar { position: relative; height: 10px; margin: 6px 0 4px; background: var(--secondary-background-color); border-radius: 5px; overflow: hidden; }
+  .budget-bar span { display: block; height: 100%; background: var(--success-color, #43a047); border-radius: 5px; }
+  .budget-bar.ahead span { background: var(--warning-color, #ffa600); }
+  .budget-bar.over span { background: var(--error-color, #db4437); }
+  .budget-bar i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--primary-text-color); opacity: 0.45; }
+  .spendings { margin: 6px 0 6px 48px; }
+  .spending { display: flex; gap: 10px; align-items: center; padding: 4px 0; font-size: 14px; border-bottom: 1px dashed var(--divider-color); }
+  .spending-date { color: var(--secondary-text-color); min-width: 44px; }
+  .spending-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .spending-amount { white-space: nowrap; }
+  .spendings > button { margin-top: 8px; }
+  .icon-button.small-x { width: 28px; height: 28px; font-size: 13px; padding: 0; }
+  .budget-in-form { background: var(--secondary-background-color); border-radius: 8px; padding: 8px 12px 10px; margin-bottom: 12px; }
+  .budget-in-form .budget-block { border: none; padding-top: 0; }
   .entry.budget-row:not([data-action]) { cursor: default; }
   .entry.budget-row .entry-name { font-style: italic; }
   .entry-icon { width: 40px; height: 40px; border-radius: 50%; background: var(--secondary-background-color); display: flex; align-items: center; justify-content: center; color: var(--primary-color); flex-shrink: 0; }

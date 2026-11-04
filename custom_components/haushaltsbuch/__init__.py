@@ -1,7 +1,7 @@
 """Haushaltsbuch: due dates of subscriptions, contracts and income in Home Assistant."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import voluptuous as vol
@@ -10,7 +10,8 @@ from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
@@ -27,14 +28,15 @@ from .const import (
     PANEL_URL_PATH,
     PANEL_WEBCOMPONENT,
     REMINDER_HOUR,
+    SERVICE_ADD_EXPENSE,
     SERVICE_CONTRACT_REMINDERS,
     SIGNAL_UPDATED,
     STORAGE_KEY,
     STORAGE_VERSION,
     VERSION,
 )
-from .engine import contract_reminders
-from .store import Book
+from .engine import budget_status, contract_reminders, period_finder
+from .store import Book, ValidationError
 from .websocket_api import async_register_websocket_commands
 
 PLATFORMS = [Platform.CALENDAR, Platform.SENSOR]
@@ -105,6 +107,58 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         SERVICE_CONTRACT_REMINDERS,
         _send_reminders,
         schema=vol.Schema({vol.Optional("all", default=False): bool}),
+    )
+
+    async def _add_expense(call: ServiceCall) -> ServiceResponse:
+        data: HaushaltsbuchData | None = hass.data.get(DOMAIN)
+        if data is None:
+            raise ServiceValidationError("Haushaltsbuch is not loaded")
+        user_id = call.context.user_id
+        today = dt_util.now().date()
+        spent_on = call.data.get("date") or today
+        try:
+            item = data.book.find_budget(user_id, call.data.get("budget") or "")
+            data.book.add_spending(
+                user_id or item["owner"],
+                item["id"],
+                spent_on.isoformat(),
+                call.data["amount"],
+                call.data.get("note"),
+            )
+        except ValidationError as err:
+            raise ServiceValidationError(
+                f"Budget not found or not unique: {call.data.get('budget') or '-'}"
+                if str(err) == "budget"
+                else f"Invalid value: {err}"
+            ) from err
+        await data.async_changed()
+        owner = user_id or item["owner"]
+        salary = (data.book.user(owner).get("settings") or {}).get("salary_item_id")
+        finder = period_finder(
+            data.book.visible_items(owner), salary, today - timedelta(days=62), today + timedelta(days=62)
+        )
+        status = budget_status(item, today, finder)
+        return {
+            "budget": item["name"],
+            "amount": round(float(call.data["amount"]), 2),
+            "spent": status["spent"],
+            "rest": status["rest"],
+            "days_left": status["days_left"],
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_EXPENSE,
+        _add_expense,
+        schema=vol.Schema(
+            {
+                vol.Optional("budget"): cv.string,
+                vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+                vol.Optional("date"): cv.date,
+                vol.Optional("note"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     return True
 

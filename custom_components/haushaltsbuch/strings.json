@@ -38,6 +38,28 @@
           "description": "Fire for every contract that can be cancelled within the next 60 days, e.g. to test an automation."
         }
       }
+    },
+    "add_expense": {
+      "name": "Add expense",
+      "description": "Records money spent from a budget (e.g. groceries). The rest of the budget for this month gets smaller; the forecast only counts what is left. Returns the budget, what was spent and what is left.",
+      "fields": {
+        "budget": {
+          "name": "Budget",
+          "description": "Name of the budget, e.g. Groceries. Can be left out if you only have one budget."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "How much you spent."
+        },
+        "date": {
+          "name": "Date",
+          "description": "When you spent it. Leave out for today."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional, e.g. the shop."
+        }
+      }
     }
   }
 }

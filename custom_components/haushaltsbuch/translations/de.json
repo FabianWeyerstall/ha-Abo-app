@@ -38,6 +38,28 @@
           "description": "Für jeden Vertrag auslösen, der in den nächsten 60 Tagen kündbar ist, z.B. um eine Automation zu testen."
         }
       }
+    },
+    "add_expense": {
+      "name": "Ausgabe erfassen",
+      "description": "Trägt eine Ausgabe für ein Budget ein (z.B. Lebensmittel). Der Rest des Budgets für diesen Monat wird kleiner, die Vorschau rechnet nur noch mit dem, was übrig ist. Gibt Budget, Ausgegebenes und Rest zurück.",
+      "fields": {
+        "budget": {
+          "name": "Budget",
+          "description": "Name des Budgets, z.B. Lebensmittel. Kann weggelassen werden, wenn es nur ein Budget gibt."
+        },
+        "amount": {
+          "name": "Betrag",
+          "description": "Wie viel du ausgegeben hast."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Wann du es ausgegeben hast. Leer lassen für heute."
+        },
+        "note": {
+          "name": "Notiz",
+          "description": "Optional, z.B. der Laden."
+        }
+      }
     }
   }
 }

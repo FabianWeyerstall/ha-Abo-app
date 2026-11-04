@@ -303,6 +303,69 @@ class Book:
         item["overrides"] = overrides[-36:]
 
 
+    # ------------------------------------------------------------ spendings
+    def add_spending(
+        self,
+        user_id: str,
+        item_id: str,
+        spent_on: str,
+        amount: Any,
+        note: str | None = None,
+    ) -> str:
+        """Record money spent from a budget. Members of its household may too."""
+        item = self.data["items"].get(item_id)
+        if item is None or not self.can_see(user_id, item):
+            raise AccessError("item")
+        if (item.get("schedule") or {}).get("frequency") != "budget":
+            raise ValidationError("not_a_budget")
+        _check_date(spent_on, "date")
+        try:
+            value = round(abs(float(amount)), 2)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("amount") from err
+        if not 0 < value < 1_000_000:
+            raise ValidationError("amount")
+        spending_id = uuid4().hex[:12]
+        spendings = list(item.get("spendings") or [])
+        spendings.append(
+            {
+                "id": spending_id,
+                "date": spent_on,
+                "amount": value,
+                "note": str(note or "")[:200],
+                "by": user_id,
+            }
+        )
+        spendings.sort(key=lambda x: (x["date"], x["id"]))
+        # About a year of shopping is plenty for the current and past months.
+        item["spendings"] = spendings[-1000:]
+        return spending_id
+
+    def delete_spending(self, user_id: str, item_id: str, spending_id: str) -> None:
+        item = self.data["items"].get(item_id)
+        if item is None or not self.can_see(user_id, item):
+            raise AccessError("item")
+        before = item.get("spendings") or []
+        after = [x for x in before if x.get("id") != spending_id]
+        if len(after) == len(before):
+            raise ValidationError("spending")
+        item["spendings"] = after
+
+    def find_budget(self, user_id: str | None, name: str) -> dict[str, Any]:
+        """A budget by id or name (ignoring case), among the user's visible items."""
+        pool = self.visible_items(user_id) if user_id else list(self.data["items"].values())
+        budgets = [i for i in pool if (i.get("schedule") or {}).get("frequency") == "budget"]
+        wanted = str(name or "").strip().lower()
+        for item in budgets:
+            if item["id"] == name:
+                return item
+        matches = [i for i in budgets if i.get("name", "").strip().lower() == wanted]
+        if not wanted and len(budgets) == 1:
+            matches = budgets
+        if len(matches) != 1:
+            raise ValidationError("budget")
+        return matches[0]
+
     # -------------------------------------------------------- export/import
     def export_items(self, user_id: str) -> dict[str, Any]:
         """The user's own items as a portable document (no ids, no households)."""
@@ -317,6 +380,10 @@ class Book:
             entry["overrides"] = [
                 {k: o.get(k) for k in ("due_date", "date", "amount")}
                 for o in item.get("overrides", [])
+            ]
+            entry["spendings"] = [
+                {k: x.get(k) for k in ("date", "amount", "note")}
+                for x in item.get("spendings", [])
             ]
             items.append(entry)
         return {
@@ -350,6 +417,7 @@ class Book:
                 cleaned = _validate_item({**raw, "household_id": None})
                 cleaned["confirmations"] = _clean_confirmations(raw.get("confirmations"))
                 cleaned["overrides"] = _clean_overrides(raw.get("overrides"))
+                cleaned["spendings"] = _clean_spendings(raw.get("spendings"))
             except ValidationError as err:
                 raise ValidationError(f"{raw.get('name') or number}: {err}") from err
             prepared.append(cleaned)
@@ -415,6 +483,22 @@ def _clean_overrides(values: Any) -> list[dict[str, Any]]:
             raise ValidationError("overrides") from err
         result.append({"due_date": o["due_date"], "date": o["date"], "amount": amount})
     return sorted(result, key=lambda o: o["due_date"])[-36:]
+
+
+def _clean_spendings(values: Any) -> list[dict[str, Any]]:
+    result = []
+    for x in values or []:
+        if not isinstance(x, dict):
+            raise ValidationError("spendings")
+        _check_date(x.get("date"), "spendings")
+        try:
+            amount = round(abs(float(x.get("amount"))), 2)
+        except (TypeError, ValueError) as err:
+            raise ValidationError("spendings") from err
+        result.append(
+            {"id": uuid4().hex[:12], "date": x["date"], "amount": amount, "note": str(x.get("note") or "")[:200]}
+        )
+    return sorted(result, key=lambda x: x["date"])[-1000:]
 
 
 def _check_date(value: Any, field: str) -> None:
