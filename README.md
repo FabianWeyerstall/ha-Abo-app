@@ -257,7 +257,7 @@ Einen Monat antippen klappt die einzelnen Buchungen auf. Ganz unten steht, welch
 
 Das Dashboard auf einen Blick: Kontostand, erwarteter Stand zum Monatsende (mit Gehaltsmonat: **vor dem nächsten Gehalt**, wenn alle Abbuchungen schon runter sind), Einnahmen und Ausgaben pro Monat, was pro Monat übrig bleibt und der tiefste Stand der nächsten 90 Tage. Darunter:
 
-- **Wohin das meiste Geld fließt:** Kreisdiagramm der Ausgaben nach Kategorie (die fünf größten, der Rest unter „Weitere“).
+- **Wohin das meiste Geld fließt:** Kreisdiagramm der Ausgaben nach Kategorie (die fünf größten, der Rest unter „Weitere“). Darunter steht, wie viel Prozent deines Einkommens das zusammen ist. Klappst du eine Kategorie auf, siehst du ihren Anteil an den Ausgaben und am Einkommen, z.B. „47 % deiner Ausgaben · 30 % deines Einkommens“.
 - **Fixkosten, Sonderposten und Budgets** im Verhältnis, pro Monat gemittelt.
 - **Wie sicher sind die Ausgaben?** Anteil sicherer, wahrscheinlicher und unsicherer Ausgaben.
 - **Was jeder Turnus pro Monat kostet** und die **größten Ausgaben**, jeweils auf einen Monat umgerechnet. Antippen öffnet den Posten.
