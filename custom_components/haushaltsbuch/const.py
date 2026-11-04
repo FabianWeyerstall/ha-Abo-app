@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "haushaltsbuch"
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 
 STORAGE_KEY = f"{DOMAIN}.data"
 STORAGE_VERSION = 1
@@ -73,6 +73,7 @@ TEMPLATES = [
     {"name": "Friseur", "direction": "expense", "category": "Gesundheit & Pflege", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
     {"name": "Kindergarten", "direction": "expense", "category": "Kinder", "icon": "mdi:human-male-child", "frequency": "monthly"},
     {"name": "Lebensmittel", "direction": "expense", "category": "Lebensmittel", "icon": "mdi:cart", "frequency": "budget"},
+    {"name": "Ungeplantes", "direction": "expense", "category": "Sonstiges", "icon": "mdi:shopping-outline", "frequency": "budget", "amount": 0},
     {"name": "Tanken", "direction": "expense", "category": "Auto", "icon": "mdi:gas-station", "frequency": "rolling", "interval": 2, "unit": "weeks", "amount_variance_pct": 20},
     {"name": "Räderwechsel", "direction": "expense", "category": "Auto", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
 ]
@@ -127,6 +128,7 @@ TEMPLATES_EN = [
     {"name": "Hairdresser", "direction": "expense", "category": "Health & Care", "icon": "mdi:content-cut", "frequency": "rolling", "interval": 1, "unit": "months"},
     {"name": "Childcare", "direction": "expense", "category": "Children", "icon": "mdi:human-male-child", "frequency": "monthly"},
     {"name": "Groceries", "direction": "expense", "category": "Groceries", "icon": "mdi:cart", "frequency": "budget"},
+    {"name": "Unplanned", "direction": "expense", "category": "Other", "icon": "mdi:shopping-outline", "frequency": "budget", "amount": 0},
     {"name": "Fuel", "direction": "expense", "category": "Car", "icon": "mdi:gas-station", "frequency": "rolling", "interval": 2, "unit": "weeks", "amount_variance_pct": 20},
     {"name": "Tyre change", "direction": "expense", "category": "Car", "icon": "mdi:tire", "frequency": "fixed_dates", "dates": ["04-01", "10-15"], "date_tolerance_days": 14},
 ]

@@ -702,7 +702,11 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   /** Budgets of the current scope that are running this month. */
   _budgets() {
-    return this._scopeItems().filter((i) => i.schedule?.frequency === "budget" && i.direction === "expense" && i.budget_status && (i.budget_status.budget > 0 || i.budget_status.spent > 0)).sort((a, b) => b.budget_status.budget - a.budget_status.budget);
+    const t = iso(today());
+    const active = (i) => i.start_date <= t && (!i.end_date || i.end_date >= t);
+    return this._scopeItems()
+      .filter((i) => i.schedule?.frequency === "budget" && i.direction === "expense" && i.budget_status && (active(i) || i.budget_status.spent > 0))
+      .sort((a, b) => b.budget_status.budget - a.budget_status.budget);
   }
 
   _renderBudgetCard() {
@@ -712,7 +716,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const period = this._salaryItem() ? ` <small class="period">${shortDay(s0.start)}–${shortDay(s0.end)}</small>` : "";
     return `<div class="card budgets">
       <div class="row-between">
-        <h3>${tr("Budgets diesen Monat", "Budgets this month")}${period}${this._help(tr("Trag hier ein, was du wirklich ausgibst. Der Balken zeigt, wie viel vom Budget weg ist, der Strich, wie viel bis heute gleichmäßig verteilt dran wäre. Orange heißt: schneller ausgegeben als geplant. Rot heißt: Budget überzogen. Was am Monatsende übrig ist, verfällt, der neue Monat startet wieder mit dem vollen Budget.", "Enter what you really spend. The bar shows how much of the budget is gone, the line how much would be due by today if spread evenly. Orange means faster than planned, red means over budget. Whatever is left at the end of the month expires; the next month starts with the full budget again."))}</h3>
+        <h3>${tr("Budgets diesen Monat", "Budgets this month")}${period}${this._help(tr("Trag hier ein, was du wirklich ausgibst. Der Balken zeigt, wie viel vom Budget weg ist, der Strich, wie viel bis heute gleichmäßig verteilt dran wäre. Orange heißt: schneller ausgegeben als geplant. Rot heißt: Budget überzogen. Was am Monatsende übrig ist, verfällt, der neue Monat startet wieder mit dem vollen Budget. Ein Budget mit 0 € ist ein Sammeltopf, z.B. für Ungeplantes: Dort zählt nur, was du einträgst.", "Enter what you really spend. The bar shows how much of the budget is gone, the line how much would be due by today if spread evenly. Orange means faster than planned, red means over budget. Whatever is left at the end of the month expires; the next month starts with the full budget again. A budget of 0 is a pot, e.g. for unplanned purchases: only what you enter counts."))}</h3>
         <button class="small" data-action="spending-new">+ ${tr("Ausgabe", "Spending")}</button>
       </div>
       ${budgets.map((i) => this._renderBudgetBar(i)).join("")}
@@ -721,12 +725,16 @@ class HaushaltsbuchPanel extends HTMLElement {
 
   _renderBudgetBar(i, { list = true } = {}) {
     const s = i.budget_status;
-    const over = s.rest < -0.005;
+    // A budget of 0 is a pot for unplanned spending: only entries count.
+    const pot = s.budget < 0.005;
+    const over = !pot && s.rest < -0.005;
     const ahead = !over && s.spent > s.planned_by_today + 0.005;
     const pct = s.budget > 0 ? Math.min(100, (s.spent / s.budget) * 100) : 100;
     const mark = s.budget > 0 ? Math.min(100, (s.planned_by_today / s.budget) * 100) : 0;
     const open = list && this._budgetOpen === i.id;
-    const sub = over
+    const sub = pot
+      ? tr("ohne festen Betrag, es zählt nur, was du einträgst", "no fixed amount, only what you enter counts")
+      : over
       ? tr(`${this._money(-s.rest)} drüber`, `${this._money(-s.rest)} over`)
       : s.days_left > 1
         ? tr(`noch ${this._money(s.rest)} für ${s.days_left} Tage, etwa ${this._money(s.rest / s.days_left)} am Tag`, `${this._money(s.rest)} left for ${s.days_left} days, about ${this._money(s.rest / s.days_left)} a day`)
@@ -748,8 +756,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       <div class="budget-line" ${list ? `data-action="budget-toggle" data-item="${esc(i.id)}" aria-expanded="${open}"` : ""}>
         <div class="entry-icon">${this._icon(i.icon || "mdi:wallet-outline")}</div>
         <div class="budget-main">
-          <div class="budget-head"><span class="entry-name">${esc(i.name)}</span><span class="budget-figures">${this._money(s.spent)} ${tr("von", "of")} ${this._money(s.budget)}</span></div>
-          <div class="budget-bar ${over ? "over" : ahead ? "ahead" : ""}"><span style="width:${pct}%"></span><i style="left:${mark}%"></i></div>
+          <div class="budget-head"><span class="entry-name">${esc(i.name)}</span><span class="budget-figures">${pot ? `${this._money(s.spent)} ${tr("ausgegeben", "spent")}` : `${this._money(s.spent)} ${tr("von", "of")} ${this._money(s.budget)}`}</span></div>
+          ${pot ? "" : `<div class="budget-bar ${over ? "over" : ahead ? "ahead" : ""}"><span style="width:${pct}%"></span><i style="left:${mark}%"></i></div>`}
           <div class="budget-sub ${over ? "neg" : ""}">${sub}${list ? ` · ${s.spendings.length === 1 ? tr("1 Eintrag", "1 entry") : tr(`${s.spendings.length} Einträge`, `${s.spendings.length} entries`)} <span class="chev">${open ? "▴" : "▾"}</span>` : ""}</div>
         </div>
       </div>
@@ -1449,7 +1457,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         <label class="check full"><input type="checkbox" name="learn" ${item.schedule?.learn !== false ? "checked" : ""} ${dis}> ${tr("Abstand aus bestätigten Terminen lernen", "Learn the interval from confirmed dates")}${item.learned_days ? tr(` (zurzeit ~${item.learned_days} Tage)`, ` (currently ~${item.learned_days} days)`) : ""}</label>
         <p class="hint full">${tr("Der nächste Termin richtet sich nach dem letzten. Ab drei bestätigten Terminen rechnet die App mit deinem echten durchschnittlichen Abstand. Tippe in der Zeitleiste auf einen Eintrag, um einen festen Termin einzutragen. Alle weiteren rücken dann nach.", "The next date follows the last one. From three confirmed dates on, the app uses your real average interval. Tap an entry in the timeline to set a fixed date; all later ones move along.")}</p>` : ""}
         ${preset === "weekly" ? `<label>${tr("Alle wie viele Wochen?", "Every how many weeks?")}<input name="interval" type="number" min="1" max="52" value="${item.schedule?.interval || 1}" ${dis}></label>` : ""}
-        ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird über die Tage des Monats verteilt vom erwarteten Kontostand abgezogen. Trägst du echte Ausgaben ein (unter „Budgets diesen Monat“ oder per Aktion haushaltsbuch.add_expense), wird der Rest kleiner. Was übrig bleibt, verfällt am Monatsende.", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance spread over the days of the month. When you enter real spendings (under “Budgets this month” or with the action haushaltsbuch.add_expense), the rest shrinks. Whatever is left expires at the end of the month.")}</p>` : ""}
+        ${preset === "budget" ? `<p class="hint full">${tr("Für Ausgaben ohne feste Termine, z.B. Lebensmittel oder Freizeit. Das Budget wird über die Tage des Monats verteilt vom erwarteten Kontostand abgezogen. Trägst du echte Ausgaben ein (unter „Budgets diesen Monat“ oder per Aktion haushaltsbuch.add_expense), wird der Rest kleiner. Was übrig bleibt, verfällt am Monatsende. Kein fester Betrag? Trag 0 ein, dann zählt nur, was du einträgst (z.B. für Ungeplantes).", "For spending without fixed dates, e.g. groceries or leisure. The budget is taken off the expected balance spread over the days of the month. When you enter real spendings (under “Budgets this month” or with the action haushaltsbuch.add_expense), the rest shrinks. Whatever is left expires at the end of the month. No fixed amount? Enter 0 and only what you enter counts (e.g. for unplanned purchases).")}</p>` : ""}
         ${preset === "fixed_dates" ? `<label class="full">${tr("Termine im Jahr (TT.MM., durch Komma getrennt)", "Dates each year (DD.MM., comma separated)")}<input name="dates" placeholder="01.04., 15.10." value="${esc(dates.join(", "))}" ${dis}></label>` : ""}
         <label>${preset === "once" ? tr("Datum", "Date") : preset === "fixed_dates" || preset === "budget" || preset === "monthly_weekday" ? tr("Gültig ab", "Valid from") : preset === "rolling" ? tr("Erster Termin", "First date") : tr("Erste Fälligkeit", "First due date")}<input name="start_date" type="date" required value="${esc(item.start_date || iso(today()))}" ${dis}></label>
         ${preset !== "once" ? `<div class="end-date">
