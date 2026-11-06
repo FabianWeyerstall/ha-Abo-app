@@ -169,6 +169,8 @@ const CSV_COLUMNS = {
   text: ["buchungstext", "art der zahlung", "umsatzart"],
   mandate: ["mandatsreferenz", "mandate reference"],
   creditor: ["gläubiger id", "glaeubiger id", "gläubiger-id", "creditor id"],
+  account: ["konto", "auftragskonto", "eigenes konto", "account"],
+  counter: ["nummer", "iban zahlungsbeteiligter", "kontonummer/iban", "iban", "counterparty iban"],
 };
 
 /** Split CSV text into rows of fields; handles quotes and ; , or tab. */
@@ -223,10 +225,29 @@ function parseBankCsv(text) {
     const date = parseCsvDate(get("date"));
     const amount = parseAmount(get("amount").replace(/[€]|EUR/g, ""), ",");
     if (!date || !Number.isFinite(amount) || amount === 0) continue;
-    bookings.push({ date, amount, name: get("name") || get("purpose").slice(0, 40), purpose: get("purpose"), category: get("category"), text: get("text"), mandate: get("mandate"), creditor: get("creditor") });
+    const account = get("account").replace(/\s/g, "").toUpperCase();
+    const counter = get("counter").replace(/\s/g, "").toUpperCase();
+    bookings.push({ date, amount, name: get("name") || get("purpose").slice(0, 40), purpose: get("purpose"), category: get("category"), text: get("text"), mandate: get("mandate"), creditor: get("creditor"), account, counter });
   }
   if (!bookings.length) throw new Error(tr("In der Datei wurden keine Umsätze gefunden.", "No transactions were found in the file."));
   return bookings;
+}
+
+/**
+ * Drop transfers between the imported accounts: the counterparty is one of
+ * them, or the same amount leaves one account and arrives in another within
+ * three days. Returns {bookings, transfers}.
+ */
+function dropOwnTransfers(bookings) {
+  const accounts = new Set(bookings.map((b) => b.account).filter(Boolean));
+  if (accounts.size < 2) return { bookings, transfers: 0 };
+  const drop = new Set(bookings.filter((b) => b.counter && accounts.has(b.counter) && b.counter !== b.account));
+  const incoming = bookings.filter((b) => b.amount > 0 && !drop.has(b));
+  for (const out of bookings.filter((b) => b.amount < 0 && !drop.has(b) && !b.counter)) {
+    const twin = incoming.find((b) => !drop.has(b) && b.account !== out.account && Math.abs(b.amount + out.amount) < 0.005 && Math.abs(daysBetween(out.date, b.date)) <= 3);
+    if (twin) drop.add(out).add(twin);
+  }
+  return { bookings: bookings.filter((b) => !drop.has(b)), transfers: drop.size };
 }
 
 const LEGAL_FORMS = /\b(gmbh( & co\.? kg)?|ag|se|kg|e\.?\s?v\.?|aktiengesellschaft|deutschland|europe|sales|mbh)\b\.?/gi;
@@ -346,12 +367,14 @@ function analyzeBank(bookings, items, history, entries) {
   const keyOwner = new Map();
   for (const i of items) for (const k of history[i.id]?.bank_keys || []) keyOwner.set(k, i);
 
+  // Suggestions look at the last two years; older history only shows what comes once a year.
+  const recentFrom = iso(addDays(parseIso(to), -730));
   const groups = new Map();
   for (const b of bookings) {
-    const direction = b.amount < 0 ? "expense" : "income";
-    const key = b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${direction}`;
-    if (!groups.has(key)) groups.set(key, { key, list: [] });
-    groups.get(key).list.push({ ...b, direction, key });
+    b.direction = b.amount < 0 ? "expense" : "income";
+    b.key = bankKeyOf(b);
+    if (!groups.has(b.key)) groups.set(b.key, { key: b.key, list: [] });
+    groups.get(b.key).list.push(b);
   }
 
   const used = new Set();
@@ -359,7 +382,37 @@ function analyzeBank(bookings, items, history, entries) {
   const suggestions = [];
   const others = [];
   for (const group of groups.values()) {
-    const list = group.list.sort((a, b) => a.date.localeCompare(b.date));
+    const full = group.list.sort((a, b) => a.date.localeCompare(b.date));
+    const recent = full.filter((b) => b.date >= recentFrom);
+    if (!recent.length) continue; // ended long ago (old flat, old provider)
+    // One-off amounts within a regular series (annual settlement, refund) are looked at separately.
+    const usual = median(recent.map((b) => Math.abs(b.amount)));
+    const cardGroup = full.every((b) => CARD_PAYMENT.test(`${b.text} ${b.purpose}`));
+    // A second booking in the same month of a monthly payee is extra, e.g. the annual statement.
+    const extra = new Set();
+    if (!cardGroup) {
+      const byMonth = {};
+      for (const b of full) (byMonth[b.date.slice(0, 7)] ||= []).push(b);
+      for (const same of Object.values(byMonth)) {
+        if (same.length < 2) continue;
+        same.sort((x, y) => Math.abs(Math.abs(x.amount) - usual) - Math.abs(Math.abs(y.amount) - usual)).slice(1).forEach((b) => extra.add(b));
+      }
+    }
+    const isOutlier = (b) => !cardGroup && recent.length >= 4 && (extra.has(b) || (Math.abs(Math.abs(b.amount) - usual) > usual * 0.5 && Math.abs(b.amount) > 20));
+    const list = recent.filter((b) => !isOutlier(b));
+    const outliers = full.filter(isOutlier);
+    if (outliers.length) {
+      const settlement = keyOwner.get(`${group.key}|y`);
+      if (settlement) {
+        const match = matchItem(settlement, outliers.filter((b) => b.date >= recentFrom), entries, history[settlement.id]);
+        if (match.confirmations.length) matches.push({ ...match, priceChange: null, key: `i:${settlement.id}`, bankKey: `${group.key}|y`, item: settlement, bankName: tidyName(outliers[0].name), remembered: true, checked: true });
+      } else {
+        const yearly = settlementSuggestion(group, outliers, to);
+        if (yearly) others.push({ ...yearly, checked: false, target: "new" });
+      }
+      outliers.forEach((b) => used.add(b));
+    }
+    if (!list.length) continue;
     const last = list[list.length - 1];
     const amount = Math.abs(last.amount);
     const { category, icon } = csvCategory(last);
@@ -379,8 +432,19 @@ function analyzeBank(bookings, items, history, entries) {
         continue;
       }
     }
-    // 2. New regular payment.
-    const suggestion = recurringSuggestion(group, list, to, category, icon);
+    // 2. New regular payment; yearly ones also from the whole history.
+    let suggestion = recurringSuggestion(group, list, to, category, icon);
+    if (!suggestion && full.length > list.length) {
+      const longRun = recurringSuggestion(group, full.filter((b) => !isOutlier(b)), to, category, icon);
+      if (longRun && (longRun.schedule.frequency === "yearly" || longRun.schedule.interval >= 6)) suggestion = longRun;
+    }
+    if (suggestion) {
+      full.forEach((b) => used.add(b));
+      if (suggestion.schedule.frequency === "yearly") {
+        const all = full.filter((b) => !isOutlier(b));
+        Object.assign(suggestion, { count: all.length, first: all[0].date });
+      }
+    }
     if (suggestion) {
       list.forEach((b) => used.add(b));
       const twin = recurringItems.find((i) => i.direction === suggestion.direction && looksLike(i, suggestion.name, category, amount, day));
@@ -396,11 +460,11 @@ function analyzeBank(bookings, items, history, entries) {
     }
   }
 
-  // Budgets: card payments by bank category.
-  const months = Math.max(1, daysBetween(from, to) / 30.4);
+  // Budgets: card payments by bank category, from the last two years.
+  const months = Math.max(1, daysBetween(from > recentFrom ? from : recentFrom, to) / 30.4);
   const byCategory = new Map();
   for (const b of bookings) {
-    if (used.has(b) || b.amount > 0) continue;
+    if (used.has(b) || b.amount > 0 || b.date < recentFrom) continue;
     const { category, icon } = csvCategory(b);
     const name = b.category || category;
     if (!byCategory.has(name)) byCategory.set(name, { name, category, icon, total: 0, list: [] });
@@ -432,6 +496,37 @@ function analyzeBank(bookings, items, history, entries) {
   budgets.sort((a, b) => b.amount - a.amount).splice(3);
   suggestions.sort((a, b) => (a.direction === b.direction ? b.amount / (b.schedule.interval || 1) - a.amount / (a.schedule.interval || 1) : a.direction === "income" ? -1 : 1));
   return { matches: [...matches, ...budgetMatches], suggestions, others, budgets, from, to, count: bookings.length };
+}
+
+const bankKeyOf = (b) => (b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${b.amount < 0 ? "expense" : "income"}`);
+
+/** Annual settlement: unusual amounts of a regular payee, about the same time every year. */
+function settlementSuggestion(group, outliers, to) {
+  const years = new Set(outliers.map((b) => b.date.slice(0, 4)));
+  if (years.size < 2) return null;
+  const last = outliers[outliers.length - 1];
+  if (daysBetween(last.date, to) > 420) return null;
+  const dayOfYear = (b) => daysBetween(`${b.date.slice(0, 4)}-01-01`, b.date);
+  const ref = dayOfYear(last);
+  const near = outliers.filter((b) => {
+    const diff = Math.abs(dayOfYear(b) - ref);
+    return Math.min(diff, 365 - diff) <= 45;
+  });
+  if (new Set(near.map((b) => b.date.slice(0, 4))).size < 2) return null;
+  const amounts = near.map((b) => b.amount);
+  const typical = median(amounts.map(Math.abs));
+  const refunds = amounts.filter((a) => a > 0).length;
+  const direction = refunds > amounts.length / 2 ? "income" : "expense";
+  const { category, icon } = csvCategory(last);
+  const next = nextDue(last.date, { frequency: "yearly", interval: 1 });
+  return {
+    key: `${group.key}|y`, bankKey: `${group.key}|y`, kind: "settlement",
+    name: tr(`Jahresabrechnung ${tidyName(last.name)}`, `Annual statement ${tidyName(last.name)}`),
+    direction, amount: Math.round(typical * 100) / 100, variance: 100, category, icon: direction === "income" ? "mdi:cash-refund" : "mdi:file-document-alert",
+    count: near.length, years: [...new Set(near.map((b) => b.date.slice(0, 4)))].sort(), mixed: refunds > 0 && refunds < amounts.length,
+    first: near[0].date, last: last.date, due: last.date, next, debit: false,
+    schedule: { frequency: "yearly", interval: 1, unit: "months" }, tolerance: 30, certainty: "unsicher",
+  };
 }
 
 /** Bookings of an existing item → confirmations of its open dates, and a possible price change. */
@@ -1337,7 +1432,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${this._isHousehold() ? "" : `<div class="row-actions">
         <button class="secondary small" data-action="export">${tr("Exportieren", "Export")}</button>
         <button class="secondary small" data-action="import">${tr("Importieren", "Import")}</button>
-        <input type="file" accept=".json,.csv,application/json,text/csv" data-change="import-file" hidden>
+        <input type="file" accept=".json,.csv,application/json,text/csv" data-change="import-file" multiple hidden>
       </div>`}
       ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="${tr("Posten suchen …", "Search entries …")}" aria-label="${tr("Posten suchen", "Search entries")}" value="${esc(this._search || "")}">` : ""}
     </div>
@@ -2001,7 +2096,9 @@ class HaushaltsbuchPanel extends HTMLElement {
 
     const own = (direction) => d.items.filter((i) => i.direction === direction && i.schedule?.frequency !== "budget");
     const newRow = (s) => {
-      const meta = s.kind === "rare"
+      const meta = s.kind === "settlement"
+        ? tr(`jedes Jahr um den ${fmtDate(s.last, { day: "2-digit", month: "2-digit" })} · gesehen ${s.years.join(", ")}${s.mixed ? " · mal Nachzahlung, mal Erstattung" : ""}`, `every year around ${fmtDate(s.last, { day: "2-digit", month: "2-digit" })} · seen ${s.years.join(", ")}${s.mixed ? " · sometimes back payment, sometimes refund" : ""}`)
+        : s.kind === "rare"
         ? tr(`einmal gesehen am ${shortDate(s.last)} · jährlich? nächste etwa ${shortDate(s.next)}`, `seen once on ${shortDate(s.last)} · yearly? next around ${shortDate(s.next)}`)
         : s.kind === "rolling"
           ? tr(`gleitend, etwa alle ${s.learnedDays} Tage · ${s.count}× gebucht`, `rolling, about every ${s.learnedDays} days · booked ${s.count}×`)
@@ -2040,7 +2137,9 @@ class HaushaltsbuchPanel extends HTMLElement {
     const nothing = !d.matches.length && !d.suggestions.length && !d.others.length && !d.budgets.length;
     return `<form data-form="csv">
       <h2>${tr("Umsätze abgleichen", "Compare transactions")}</h2>
-      <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}.`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}.`)}</p>
+      <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}`)}${d.accounts > 1 ? tr(` auf ${d.accounts} Konten`, ` in ${d.accounts} accounts`) : ""}.
+        ${d.transfers ? tr(`${d.transfers} Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${d.transfers} transfers between your accounts are left out.`) : ""}
+        ${daysBetween(d.from, d.to) > 760 ? tr("Vorschläge kommen aus den letzten zwei Jahren, die ältere Historie hilft nur bei Jährlichem.", "Suggestions come from the last two years; older history only helps with yearly payments.") : ""}</p>
       ${nothing ? `<p class="hint">${tr("Nichts Neues gefunden. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "Nothing new found. For good suggestions the file should cover at least 6 to 12 months.")}</p>` : ""}
       ${section(tr("Passt zu deinen Posten", "Matches your entries"), tr("Gekommene Buchungen werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen im passenden Budget.", "Bookings that arrived are confirmed with their real date and amount; card payments go into the matching budget."), d.matches.map(matchRow).join(""))}
       ${section(tr("Neue regelmäßige Buchungen", "New regular payments"), "", d.suggestions.map(newRow).join(""))}
@@ -2155,14 +2254,18 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
-  async _openCsv(fileName, text) {
-    const bookings = parseBankCsv(text);
+  async _openCsv(fileNames, texts) {
+    const fileName = fileNames.join(", ");
+    // Several accounts: one CSV each, or one CSV with several accounts.
+    const parsed = dropOwnTransfers(texts.flatMap((t) => parseBankCsv(t)));
+    const bookings = parsed.bookings;
     const items = this._state.items.filter((i) => i.owner === this._state.user.id);
     const from = bookings.reduce((m, b) => (b.date < m ? b.date : m), bookings[0].date);
     const to = bookings.reduce((m, b) => (b.date > m ? b.date : m), bookings[0].date);
     // Open dates of the own entries over the file's period, in steps the server allows.
     const entries = [];
-    for (let start = addDays(parseIso(from), -14); start <= addDays(parseIso(to), 7); start = addDays(start, 366)) {
+    const since = [parseIso(from), addDays(parseIso(to), -744)].sort((a, b) => b - a)[0];
+    for (let start = addDays(since, -14); start <= addDays(parseIso(to), 7); start = addDays(start, 366)) {
       const end = [addDays(start, 365), addDays(parseIso(to), 7)].sort((a, b) => a - b)[0];
       const f = await this._ws("forecast", { scope: "me", start: iso(start), end: iso(end) });
       entries.push(...f.days.flatMap((day) => day.entries));
@@ -2171,8 +2274,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const analysis = analyzeBank(bookings, items, history, entries);
     const bookingsByKey = {};
     for (const b of bookings) {
-      const key = b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${b.amount < 0 ? "expense" : "income"}`;
-      (bookingsByKey[key] ||= []).push(b);
+      (bookingsByKey[bankKeyOf(b)] ||= []).push(b);
     }
     // A look-alike entry is pre-selected as target, so its bookings are confirmed instead of a duplicate.
     for (const s of analysis.suggestions) {
@@ -2180,20 +2282,23 @@ class HaushaltsbuchPanel extends HTMLElement {
       if (twin) Object.assign(s, { target: twin.id, checked: true });
     }
     this._error = null;
-    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, ...analysis };
+    const accounts = new Set(bookings.map((b) => b.account).filter(Boolean)).size;
+    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, accounts, transfers: parsed.transfers, ...analysis };
     this._render();
   }
 
   async _readImportFile(input) {
-    const file = input.files?.[0];
+    const files = [...(input.files || [])];
     input.value = "";
+    const file = files[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      if (/\.csv$/i.test(file.name) || !text.trim().startsWith("{")) {
-        await this._openCsv(file.name, text);
+      const texts = await Promise.all(files.map((f) => f.text()));
+      if (files.length > 1 || /\.csv$/i.test(file.name) || !texts[0].trim().startsWith("{")) {
+        await this._openCsv(files.map((f) => f.name), texts);
         return;
       }
+      const text = texts[0];
       const data = JSON.parse(text);
       if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error(tr("Das ist keine Export-Datei des Haushaltsbuchs.", "This is not a Household Budget export file."));
       this._error = null;
