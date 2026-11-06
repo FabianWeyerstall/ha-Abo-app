@@ -103,10 +103,16 @@ class Book:
         salary = settings.get("salary_item_id") or None
         if salary not in self.data["items"]:
             salary = None  # unknown or deleted item: back to calendar months
+        ignored = settings.get("stats_ignored") or []
+        if not isinstance(ignored, list):
+            raise ValidationError("stats_ignored")
+        # payees marked "is fine" in the statistics (e.g. no forgotten subscription)
+        ignored = list(dict.fromkeys(str(k)[:120] for k in ignored if k))[-300:]
         self.user(user_id)["settings"] = {
             "special_min_months": min_months,
             "special_min_amount": min_amount,
             "salary_item_id": salary,
+            "stats_ignored": ignored,
         }
 
     def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:

@@ -1281,9 +1281,14 @@ class HaushaltsbuchPanel extends HTMLElement {
       return `<button class="assign-chip ${name ? "set" : ""}" data-action="ledger-assign" data-row="${indexOf.get(r)}" data-current="${esc(name || "")}">${name ? `→ ${esc(name)}` : tr("zuordnen", "assign")}</button>`;
     };
 
+    const insights = this._statsTab === "insights";
     const tiles = `<div class="card">
       <div class="row-between stats-head">
         <h3>${tr("Statistik", "Statistics")} · ${esc(label)}</h3>
+        <div class="segmented" role="tablist">
+          <button class="${insights ? "" : "active"}" data-action="stats-tab" data-tab="numbers">${tr("Zahlen", "Numbers")}</button>
+          <button class="${insights ? "active" : ""}" data-action="stats-tab" data-tab="insights">${tr("Auswertungen", "Insights")}</button>
+        </div>
         <div class="stats-filters">
           <select data-change="stats-year" aria-label="${tr("Jahr", "Year")}">
             <option value="all" ${all ? "selected" : ""}>${tr("Alle Jahre", "All years")}</option>
@@ -1396,9 +1401,237 @@ class HaushaltsbuchPanel extends HTMLElement {
 
     const manage = `<div class="card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you.`)}</p>
       <button class="secondary small" data-action="stats-clear">${tr("Alle löschen", "Delete all")}</button></div></div>`;
+    if (insights) return tiles + this._renderInsights(mine, lastDate, year, all) + manage;
     return tiles + history + categories + manage;
   }
 
+
+  // ---------------------------------------------------------- insights
+
+  /** Evaluations of the saved transactions that help keep the book complete and realistic. */
+  _renderInsights(mine, lastDate, year, all) {
+    const items = this._state.items;
+    const history = this._bankHistory || {};
+    const ignored = new Set(this._state.user.settings?.stats_ignored || []);
+    const money = (v) => this._moneyPlain(v);
+    const card = (title, hint, body) => `<div class="card insight"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ""}${body}</div>`;
+    const empty = (text) => `<p class="hint">${text}</p>`;
+    const assigned = new Map();
+    for (const [id, h] of Object.entries(history)) {
+      for (const [date, amount] of [...(h.spendings || []), ...(h.booked || [])]) if (amount != null) assigned.set(`${date}|${Number(amount).toFixed(2)}`, id);
+    }
+    const byKey = new Map();
+    for (const i of items) for (const k of history[i.id]?.bank_keys || []) byKey.set(k, i);
+    const rowKey = (b) => `${b.date}|${Math.abs(b.amount).toFixed(2)}`;
+
+    // Payees with their bookings, as the CSV import keys them without mandate.
+    const groups = new Map();
+    for (const r of mine) {
+      const b = { date: r[0], amount: r[1], name: r[2] || "?", purpose: r[6] || "", category: r[4] || r[3] || "", main: r[3] || "", text: "", mandate: "", creditor: "", direction: r[1] < 0 ? "expense" : "income" };
+      const key = `n:${nameKey(b.name)}|${b.direction}`;
+      if (!groups.has(key)) groups.set(key, { key, list: [] });
+      groups.get(key).list.push(b);
+    }
+    const recentFrom = iso(addDays(parseIso(lastDate), -730));
+    const plainItems = items.filter((i) => !["budget", "once"].includes(i.schedule?.frequency));
+    const regular = [];
+    for (const g of groups.values()) {
+      const list = g.list.sort((a, b) => a.date.localeCompare(b.date));
+      if (list.every((b) => CARD_PAYMENT.test(b.purpose))) continue;
+      const last = list[list.length - 1];
+      const { category, icon } = csvCategory(last);
+      const recent = list.filter((b) => b.date >= recentFrom);
+      const now = recent.length >= 2 ? recurringSuggestion(g, recent, lastDate, category, icon) : null;
+      const ever = list.length >= 3 ? recurringSuggestion(g, list, last.date, category, icon) : null;
+      if (!now && !ever) continue;
+      let item = byKey.get(g.key) || null;
+      if (!item) for (const b of list) if (!item && assigned.get(rowKey(b))) item = items.find((i) => i.id === assigned.get(rowKey(b))) || null;
+      if (!item && now) item = bestItem(plainItems, last.direction, last.name, last.purpose, category, now.amount, Number(now.due.slice(8)), recent.map((b) => Math.abs(b.amount))) || null;
+      regular.push({ g, now, ever, item, last });
+    }
+
+    // 1. Regular debits that belong to no entry.
+    const missing = regular.filter((x) => x.now && !x.item && x.last.direction === "expense" && !ignored.has(x.g.key))
+      .sort((a, b) => monthlyEquivalent(b.now) - monthlyEquivalent(a.now));
+    this._insightSuggestions = Object.fromEntries(missing.map((x) => [x.g.key, x.now]));
+    const missingCard = card(
+      tr("Vergessene Abos?", "Forgotten subscriptions?"),
+      tr("Regelmäßige Abbuchungen der letzten zwei Jahre, die zu keinem deiner Posten gehören.", "Regular debits of the last two years that belong to none of your entries."),
+      missing.length
+        ? `<div class="insight-list">${missing.map(({ g, now }) => `<div class="insight-row">
+            <div class="entry-icon">${this._icon(now.icon)}</div>
+            <div class="entry-main"><div class="entry-name">${esc(now.name)}</div>
+              <div class="entry-meta plain">${esc(scheduleLabel(now))} · ${now.count}× · ${tr("zuletzt", "last")} ${shortDate(now.last)}</div>
+              <div class="insight-actions"><button class="small" data-action="insight-create" data-key="${esc(g.key)}">${tr("Als Posten anlegen", "Create entry")}</button><button class="small secondary" data-action="insight-ignore" data-key="${esc(g.key)}">${tr("Ist ok", "Fine")}</button></div>
+            </div>
+            <div class="entry-amount neg">${money(-now.amount)}</div></div>`).join("")}</div>`
+        : empty(tr("Alles erfasst: Jede regelmäßige Abbuchung gehört zu einem Posten.", "All covered: every regular debit belongs to an entry.")),
+    );
+
+    // 2. How the price of regular payments developed over the years.
+    const prices = [];
+    for (const x of regular) {
+      if (x.last.direction !== "expense" || daysBetween(x.last.date, lastDate) > 400) continue;
+      const usual = median(x.g.list.map((b) => Math.abs(b.amount)));
+      const perYear = {};
+      for (const b of x.g.list) if (Math.abs(Math.abs(b.amount) - usual) <= usual * 0.6) (perYear[b.date.slice(0, 4)] ||= []).push(Math.abs(b.amount));
+      const ys = Object.keys(perYear).sort();
+      if (ys.length < 2) continue;
+      const first = median(perYear[ys[0]]);
+      const latest = median(perYear[ys[ys.length - 1]]);
+      const pct = Math.round(((latest - first) / first) * 100);
+      if (Math.abs(pct) < 3) continue;
+      prices.push({ name: x.item?.name || (x.now || x.ever).name, from: ys[0], to: ys[ys.length - 1], first, latest, pct, steps: ys.map((y) => [y, median(perYear[y])]) });
+    }
+    prices.sort((a, b) => Math.abs(b.latest - b.first) * 12 - Math.abs(a.latest - a.first) * 12);
+    const priceCard = card(
+      tr("Preisentwicklung deiner Verträge", "How your contracts got pricier"),
+      tr("Typischer Betrag im ersten und im letzten Jahr. Antippen zeigt jedes Jahr.", "Typical amount in the first and the latest year. Tap for every year."),
+      prices.length
+        ? `<div class="insight-list">${prices.slice(0, 12).map((p) => `<details class="insight-price"><summary>
+            <span class="entry-name">${esc(p.name)}</span>
+            <span class="insight-change">${money(p.first)} → ${money(p.latest)} <span class="delta ${p.pct > 0 ? "neg" : "pos"}">${p.pct > 0 ? "+" : ""}${p.pct} %</span></span>
+            <span class="hint">${p.from}–${p.to}</span></summary>
+            <div class="insight-steps">${p.steps.map(([y, v]) => `<span>${y}: ${money(v)}</span>`).join("")}</div></details>`).join("")}</div>`
+        : empty(tr("Keine Preisänderungen bei laufenden Verträgen gefunden.", "No price changes found in running contracts.")),
+    );
+
+    // 3. Budgets compared with the real spending of the last 12 months.
+    const yearAgo = iso(addDays(parseIso(lastDate), -365));
+    const budgets = items.filter((i) => i.schedule?.frequency === "budget");
+    const stemsOf = (text) => wordsOf(text).map((w) => w.slice(0, Math.max(4, w.length - 2)));
+    const budgetRows = budgets.map((budget) => {
+      const stems = stemsOf(budget.name);
+      const keys = new Set(history[budget.id]?.bank_keys || []);
+      const generic = budget.name.toLowerCase() === String(budget.category).toLowerCase();
+      const hits = mine.filter((r) => {
+        if (r[1] >= 0 || r[0] < yearAgo) return false;
+        const b = { date: r[0], amount: r[1], name: r[2] || "", purpose: r[6] || "", category: r[4] || r[3] || "" };
+        if (assigned.get(rowKey(b)) === budget.id) return true;
+        if (keys.has(`c:${b.category}`) || keys.has(`n:${nameKey(b.name)}|expense`)) return true;
+        const words = wordsOf(`${b.category} ${b.name} ${b.purpose}`);
+        if (stems.some((st) => words.some((w) => w.startsWith(st)))) return true;
+        return generic && csvCategory(b).category === budget.category;
+      });
+      const perMonth = {};
+      for (const r of hits) perMonth[r[0].slice(0, 7)] = (perMonth[r[0].slice(0, 7)] || 0) - r[1];
+      const months = Math.max(1, Math.min(12, daysBetween(mine[0][0] > yearAgo ? mine[0][0] : yearAgo, lastDate) / 30.4));
+      const avg = Object.values(perMonth).reduce((a, v) => a + v, 0) / months;
+      const peak = Math.max(0, ...Object.values(perMonth));
+      const planned = Number(budget.current_amount ?? budget.amount) || 0;
+      const proposal = Math.ceil(avg / 10) * 10;
+      return { budget, count: hits.length, avg, peak, planned, proposal };
+    });
+    const budgetCard = card(
+      tr("Budgets aus echten Zahlen", "Budgets from real numbers"),
+      tr("Was du in den letzten 12 Monaten im Schnitt wirklich ausgegeben hast.", "What you really spent on average over the last 12 months."),
+      budgets.length
+        ? `<div class="insight-list">${budgetRows.map((x) => {
+            const diff = x.planned ? Math.round(((x.avg - x.planned) / x.planned) * 100) : 0;
+            const tone = !x.count ? "" : diff > 10 ? "neg" : diff < -10 ? "pos" : "";
+            return `<div class="insight-row">
+              <div class="entry-icon">${this._icon(x.budget.icon)}</div>
+              <div class="entry-main"><div class="entry-name">${esc(x.budget.name)}</div>
+                <div class="entry-meta plain">${x.count
+                  ? tr(`geplant ${this._moneyPlain(x.planned)} · tatsächlich Ø ${this._moneyPlain(x.avg)} pro Monat · teuerster Monat ${this._moneyPlain(x.peak)} · ${x.count} Zahlungen`, `planned ${this._moneyPlain(x.planned)} · actually avg ${this._moneyPlain(x.avg)} per month · most expensive month ${this._moneyPlain(x.peak)} · ${x.count} payments`)
+                  : tr(`geplant ${this._moneyPlain(x.planned)} · keine passenden Umsätze gefunden`, `planned ${this._moneyPlain(x.planned)} · no matching transactions found`)}</div>
+                ${x.count && x.budget.editable !== false && Math.abs(x.proposal - x.planned) >= Math.max(10, x.planned * 0.05)
+                  ? `<div class="insight-actions"><button class="small" data-action="insight-budget" data-id="${esc(x.budget.id)}" data-amount="${x.proposal}">${tr(`Budget auf ${this._moneyPlain(x.proposal)} setzen`, `Set budget to ${this._moneyPlain(x.proposal)}`)}</button></div>`
+                  : ""}
+              </div>
+              ${x.count ? `<div class="insight-badge ${tone}">${diff > 0 ? "+" : ""}${diff} %</div>` : ""}</div>`;
+          }).join("")}</div>`
+        : empty(tr("Du hast noch keine Budgets. Unter „Posten“ legst du eins an, z. B. für Lebensmittel.", "You have no budgets yet. Create one under “Entries”, e.g. for groceries.")),
+    );
+
+    // 4. Expensive months of the year and what to put aside for them.
+    const years = [...new Set(mine.map((r) => r[0].slice(0, 4)))].sort();
+    const fullYears = years.filter((y) => mine.some((r) => r[0].startsWith(`${y}-01`)) && mine.some((r) => r[0].startsWith(`${y}-12`)));
+    let seasonCard;
+    if (fullYears.length) {
+      const perMonth = Array.from({ length: 12 }, () => 0);
+      for (const r of mine) if (r[1] < 0 && fullYears.includes(r[0].slice(0, 4))) perMonth[Number(r[0].slice(5, 7)) - 1] -= r[1];
+      const avgMonth = perMonth.map((v) => v / fullYears.length);
+      const mean = avgMonth.reduce((a, v) => a + v, 0) / 12;
+      const top = Math.max(...avgMonth);
+      const reserve = avgMonth.reduce((a, v) => a + Math.max(0, v - mean), 0) / 12;
+      const expensive = avgMonth.map((v, i) => [i, v]).filter(([, v]) => v > mean * 1.1).sort((a, b) => b[1] - a[1]);
+      seasonCard = card(
+        tr("Teure Monate", "Expensive months"),
+        tr(`Durchschnittliche Ausgaben je Monat aus ${fullYears.length === 1 ? `dem Jahr ${fullYears[0]}` : `${fullYears.length} vollen Jahren (${fullYears[0]}–${fullYears[fullYears.length - 1]})`}.`, `Average spending per month from ${fullYears.length === 1 ? fullYears[0] : `${fullYears.length} full years (${fullYears[0]}–${fullYears[fullYears.length - 1]})`}.`),
+        `<div class="stats-columns season">${avgMonth.map((v, i) => `<div class="stats-col"><div class="stats-bars"><span class="bar-out ${v > mean * 1.1 ? "hot" : ""}" style="height:${(v / top) * 100}%"></span></div><span class="stats-col-label">${esc(monthName(i, "short"))}</span></div>`).join("")}</div>
+        <p>${tr(`Im Schnitt gibst du <b>${this._moneyPlain(mean)}</b> pro Monat aus.`, `On average you spend <b>${this._moneyPlain(mean)}</b> per month.`)}
+        ${expensive.length ? tr(` Teurer sind: ${expensive.map(([i, v]) => `${monthName(i)} (+${this._moneyPlain(v - mean)})`).join(", ")}.`, ` More expensive: ${expensive.map(([i, v]) => `${monthName(i)} (+${this._moneyPlain(v - mean)})`).join(", ")}.`) : ""}</p>
+        ${reserve >= 5 ? `<p class="insight-tip">${tr(`Leg jeden Monat etwa <b>${this._moneyPlain(Math.ceil(reserve / 5) * 5)}</b> zurück, dann tun die teuren Monate nicht weh.`, `Put aside about <b>${this._moneyPlain(Math.ceil(reserve / 5) * 5)}</b> each month and the expensive months won't hurt.`)}</p>` : ""}`,
+      );
+    } else {
+      seasonCard = card(tr("Teure Monate", "Expensive months"), "", empty(tr("Dafür braucht es mindestens ein volles Kalenderjahr an Umsätzen.", "This needs at least one full calendar year of transactions.")));
+    }
+
+    // 5. Year in review.
+    const reviewYear = !all ? year : fullYears[fullYears.length - 1] || years[years.length - 1];
+    const yearRows = mine.filter((r) => r[0].startsWith(reviewYear));
+    const income = yearRows.filter((r) => r[1] > 0).reduce((a, r) => a + r[1], 0);
+    const spent = yearRows.filter((r) => r[1] < 0).reduce((a, r) => a - r[1], 0);
+    const monthsLeft = {};
+    for (const r of yearRows) monthsLeft[r[0].slice(5, 7)] = (monthsLeft[r[0].slice(5, 7)] || 0) + r[1];
+    const monthEntries = Object.entries(monthsLeft).sort((a, b) => b[1] - a[1]);
+    // Rent and other regular payments would fill this list; only one-off expenses count.
+    const regularKeys = new Set(regular.filter((x) => x.now || x.ever).map((x) => x.g.key));
+    const biggest = yearRows.filter((r) => r[1] < 0 && !regularKeys.has(`n:${nameKey(r[2] || "?")}|expense`)).sort((a, b) => a[1] - b[1]).slice(0, 5);
+    const payees = new Map();
+    for (const r of yearRows) if (r[1] < 0) payees.set(r[2] || "?", (payees.get(r[2] || "?") || 0) - r[1]);
+    const topPayees = [...payees.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const line = (left, right) => `<div class="stats-sub static"><span>${left}</span><span>${right}</span></div>`;
+    const reviewCard = card(
+      tr(`Jahresrückblick ${reviewYear}`, `${reviewYear} in review`),
+      all ? tr("Das letzte volle Jahr. Wähle oben ein Jahr für einen anderen Rückblick.", "The latest full year. Pick a year above for another review.") : "",
+      yearRows.length
+        ? `<div class="totals">
+            <div><div class="label">${tr("Eingenommen", "Income")}</div><div class="big pos">${this._money(income)}</div></div>
+            <div><div class="label">${tr("Ausgegeben", "Spent")}</div><div class="big neg">${this._money(spent)}</div></div>
+            <div><div class="label">${tr("Übrig", "Left over")}</div><div class="big">${this._money(income - spent)}</div>${income ? `<div class="hint">${tr(`${Math.round(((income - spent) / income) * 100)} % gespart`, `${Math.round(((income - spent) / income) * 100)} % saved`)}</div>` : ""}</div>
+          </div>
+          ${monthEntries.length > 1 ? `<p class="hint">${tr(`Bester Monat: ${monthName(Number(monthEntries[0][0]) - 1)} (${this._moneyPlain(monthEntries[0][1])} übrig) · knappster Monat: ${monthName(Number(monthEntries[monthEntries.length - 1][0]) - 1)} (${this._moneyPlain(monthEntries[monthEntries.length - 1][1])})`, `Best month: ${monthName(Number(monthEntries[0][0]) - 1)} (${this._moneyPlain(monthEntries[0][1])} left) · tightest month: ${monthName(Number(monthEntries[monthEntries.length - 1][0]) - 1)} (${this._moneyPlain(monthEntries[monthEntries.length - 1][1])})`)}</p>` : ""}
+          <div class="stats-detail"><div><h4>${tr("Größte Einzelausgaben (ohne Regelmäßiges)", "Biggest one-off expenses")}</h4>${biggest.map((r) => line(`${shortDate(r[0])} ${esc(r[2] || "?")}`, money(-r[1]))).join("")}</div>
+          <div><h4>${tr("Meistes Geld ging an", "Most money went to")}</h4>${topPayees.map(([n, v]) => line(esc(n), money(v))).join("")}</div></div>`
+        : empty(tr("Für dieses Jahr sind keine Umsätze gespeichert.", "No transactions saved for this year.")),
+    );
+
+    // 6. Personal price increase per category between the first and the latest full year.
+    let inflationCard;
+    if (fullYears.length >= 2) {
+      const fy = fullYears[0];
+      const ly = fullYears[fullYears.length - 1];
+      const span = Number(ly) - Number(fy);
+      const sumBy = (y) => {
+        const m = new Map();
+        for (const r of mine) if (r[1] < 0 && r[0].startsWith(y)) m.set(r[4] || r[3] || "?", (m.get(r[4] || r[3] || "?") || 0) - r[1]);
+        return m;
+      };
+      const a = sumBy(fy);
+      const b = sumBy(ly);
+      const totalA = [...a.values()].reduce((s, v) => s + v, 0);
+      const totalB = [...b.values()].reduce((s, v) => s + v, 0);
+      const rows = [...b.entries()].filter(([c, v]) => (a.get(c) || 0) >= 120 && v >= 120).sort((x, y) => y[1] - x[1]).slice(0, 8)
+        .map(([c, v]) => ({ c, before: a.get(c) / 12, now: v / 12 }));
+      const rate = (x, y) => new Intl.NumberFormat(this._numberLocale(), { maximumFractionDigits: 1 }).format(Math.round((Math.pow(y / x, 1 / span) - 1) * 1000) / 10);
+      const pct = (x, y) => Math.round(((y - x) / x) * 100);
+      inflationCard = card(
+        tr("Dein persönlicher Preisanstieg", "Your personal price increase"),
+        tr(`Ausgaben pro Monat ${fy} und ${ly}. Mehr kann auch heißen: mehr gekauft, nicht nur teurer.`, `Spending per month in ${fy} and ${ly}. More can also mean you bought more, not only higher prices.`),
+        `<div class="insight-list">
+          ${[{ c: tr("Alle Ausgaben", "All spending"), before: totalA / 12, now: totalB / 12, total: true }, ...rows].map((x) => `<div class="stats-sub static ${x.total ? "total" : ""}">
+            <span>${esc(x.c)}</span>
+            <span>${money(x.before)} → ${money(x.now)} <span class="delta ${x.now > x.before ? "neg" : "pos"}">${pct(x.before, x.now) > 0 ? "+" : ""}${pct(x.before, x.now)} %</span>${span > 1 ? ` <span class="hint">(${tr(`${rate(x.before, x.now)} % pro Jahr`, `${rate(x.before, x.now)} % per year`)})</span>` : ""}</span></div>`).join("")}
+        </div>`,
+      );
+    } else {
+      inflationCard = card(tr("Dein persönlicher Preisanstieg", "Your personal price increase"), "", empty(tr("Dafür braucht es mindestens zwei volle Kalenderjahre an Umsätzen.", "This needs at least two full calendar years of transactions.")));
+    }
+
+    return missingCard + budgetCard + priceCard + seasonCard + reviewCard + inflationCard;
+  }
 
   _renderBalanceCard() {
     const b = this._scopeBalance();
@@ -3190,6 +3423,34 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._statsYear = target.dataset.year;
         this._render();
         break;
+      case "stats-tab":
+        this._statsTab = target.dataset.tab;
+        this._render();
+        break;
+      case "insight-ignore": {
+        const st = this._state.user.settings || {};
+        this._saveSpecialSettings({ stats_ignored: [...(st.stats_ignored || []), target.dataset.key] });
+        break;
+      }
+      case "insight-create": {
+        const s = this._insightSuggestions?.[target.dataset.key];
+        if (!s) break;
+        const item = {
+          name: s.name, direction: s.direction, amount: s.amount, amount_variance_pct: s.variance, date_tolerance_days: s.tolerance || 0,
+          category: s.category, icon: s.icon, start_date: s.due, schedule: s.schedule, weekend_shift: s.category === "Gehalt" ? "previous" : null,
+          note: tr("Aus der Statistik angelegt", "Created from statistics"), bank_keys: [s.bankKey],
+          confirmations: [{ due_date: s.due, status: "booked", actual_date: s.last, actual_amount: s.amount }],
+        };
+        this._run(() => this._ws("import", { data: { format: "haushaltsbuch", items: [item] }, replace: false }));
+        break;
+      }
+      case "insight-budget": {
+        const item = this._state.items.find((i) => i.id === target.dataset.id);
+        if (!item) break;
+        const { editable, owner_name, owner, current_amount, contract_info, learned_days, budget_status, ...payload } = item;
+        this._run(() => this._ws("item/save", { item: { ...payload, amount: Number(target.dataset.amount) } }));
+        break;
+      }
       case "ledger-assign":
         this._error = null;
         this._dialog = { type: "assign", row: this._ledger.rows[Number(target.dataset.row)], current: target.dataset.current || "" };
@@ -3618,6 +3879,28 @@ const STYLES = `
   .stats-col[disabled] { cursor: default; }
   .stats-col.dim { opacity: 0.4; }
   .stats-col.active .stats-col-label { color: var(--primary-color); font-weight: 600; }
+  .insight .insight-list { display: flex; flex-direction: column; }
+  .insight-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--divider-color); }
+  .insight-row .entry-main { flex: 1; min-width: 0; }
+  .insight-row .entry-meta.plain { display: block; }
+  .insight-price summary .entry-name { color: var(--primary-text-color); }
+  .insight-change { color: var(--primary-text-color); }
+  .insight-actions { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .insight-badge { font-size: 13px; color: var(--secondary-text-color); white-space: nowrap; }
+  .insight-badge.neg { color: var(--error-color, #db4437); }
+  .insight-badge.pos { color: var(--success-color, #43a047); }
+  .insight-price { border-top: 1px solid var(--divider-color); padding: 8px 0; }
+  .insight-price summary { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; cursor: pointer; list-style: none; }
+  .insight-price summary::-webkit-details-marker { display: none; }
+  .insight-price .entry-name { flex: 1 1 140px; }
+  .insight-change { font-size: 13px; white-space: nowrap; }
+  .insight-steps { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--secondary-text-color); padding-top: 4px; }
+  .stats-columns.season { height: 120px; }
+  .bar-out.hot { opacity: 1; }
+  .insight-tip { background: var(--secondary-background-color); border-radius: 8px; padding: 8px 12px; }
+  .stats-sub.static { cursor: default; margin: 0; width: auto; padding: 4px 0; border-top: 1px solid var(--divider-color); }
+  .stats-sub.static.total { font-weight: 600; border-top: none; }
+  .stats-sub.static:hover { background: none; }
   .assign-line { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
   .assign-line > span { min-width: 0; }
   .assign-chip { flex-shrink: 0; background: none; border: 1px dashed var(--divider-color); border-radius: 10px; padding: 1px 8px; font: inherit; font-size: 11px; color: var(--secondary-text-color); cursor: pointer; }

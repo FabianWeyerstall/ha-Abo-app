@@ -209,8 +209,12 @@ def test_user_settings_for_special_items():
     book = Book()
     book.set_user_settings("anna", {"special_min_months": 3, "special_min_amount": "50"})
     assert book.user("anna")["settings"] == {
-        "special_min_months": 3, "special_min_amount": 50.0, "salary_item_id": None,
+        "special_min_months": 3, "special_min_amount": 50.0, "salary_item_id": None, "stats_ignored": [],
     }
+    book.set_user_settings("anna", {"stats_ignored": ["n:verein|expense", "n:verein|expense", ""]})
+    assert book.user("anna")["settings"]["stats_ignored"] == ["n:verein|expense"]
+    with pytest.raises(ValidationError):
+        book.set_user_settings("anna", {"stats_ignored": "n:verein"})
     with pytest.raises(ValidationError):
         book.set_user_settings("anna", {"special_min_months": 5})
     with pytest.raises(ValidationError):
