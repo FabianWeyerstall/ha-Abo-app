@@ -530,6 +530,8 @@ function analyzeBank(bookings, items, history, entries) {
     const byBankCategory = remembered?.schedule?.frequency === "budget" ? remembered : budgetStems.find((x) => stemHit(c.name, x.stems))?.item;
     const rest = [];
     for (const b of c.list) {
+      const byPayee = keyOwner.get(b.key);
+      if (byPayee?.schedule?.frequency === "budget") { assign(byPayee, b, null); continue; }
       if (byBankCategory) { assign(byBankCategory, b, `c:${c.name}`); continue; }
       const byText = budgetStems.find((x) => stemHit(`${b.name} ${b.purpose}`, x.stems))?.item;
       const sameCategory = budgetItems.filter((i) => i.category === c.category);
@@ -983,7 +985,9 @@ class HaushaltsbuchPanel extends HTMLElement {
     } else if (this._view === "households" && this._state.user.is_admin) {
       this._backups = await this._ws("backup/list");
     } else if (this._view === "stats") {
-      this._ledger = await this._ws("ledger/rows");
+      const [ledger, history] = await Promise.all([this._ws("ledger/rows"), this._ws("bank/history")]);
+      this._ledger = ledger;
+      this._bankHistory = history;
     } else if (this._view === "dashboard") {
       const [trend, summary] = await Promise.all([
         this._ws("forecast", { scope, start: iso(t), end: iso(addDays(t, 90)) }),
@@ -1265,6 +1269,17 @@ class HaushaltsbuchPanel extends HTMLElement {
     const label = month ? monthLabel : all ? tr(`Ø pro Jahr seit ${years[0]}`, `avg per year since ${years[0]}`) : cutoff !== "12-31" ? tr(`${year} bis ${shortDay(lastDate)}`, `${year} until ${shortDay(lastDate)}`) : year;
     const vs = was && month ? `<div class="hint">${tr(`ggü. ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`, `vs ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`)}</div>` : was ? `<div class="hint">${tr(`ggü. ${prevYear}${cutoff !== "12-31" ? ` bis ${shortDay(lastDate)}` : ""}`, `vs ${prevYear}${cutoff !== "12-31" ? ` until ${shortDay(lastDate)}` : ""}`)}</div>` : "";
     const rest = now.income - now.expense;
+    // Where a transaction went: budget spending or confirmed booking of an entry.
+    const indexOf = new Map(rows.map((r, i) => [r, i]));
+    const itemNames = Object.fromEntries(this._state.items.map((i) => [i.id, i.name]));
+    const assignedTo = new Map();
+    for (const [id, h] of Object.entries(this._bankHistory || {})) {
+      for (const [date, amount] of [...(h.spendings || []), ...(h.booked || [])]) if (amount != null && itemNames[id]) assignedTo.set(`${date}|${Number(amount).toFixed(2)}`, itemNames[id]);
+    }
+    const assignChip = (r) => {
+      const name = assignedTo.get(`${r[0]}|${Math.abs(r[1]).toFixed(2)}`);
+      return `<button class="assign-chip ${name ? "set" : ""}" data-action="ledger-assign" data-row="${indexOf.get(r)}" data-current="${esc(name || "")}">${name ? `→ ${esc(name)}` : tr("zuordnen", "assign")}</button>`;
+    };
 
     const tiles = `<div class="card">
       <div class="row-between stats-head">
@@ -1335,7 +1350,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <div class="row-between stats-head"><h3>${tr(`Umsätze ${monthLabel}`, `Transactions ${monthLabel}`)}</h3>${toggle}</div>
       <ul class="stats-month">${[...period].sort((a, b) => b[0].localeCompare(a[0]) || a[1] - b[1]).map((r) => `<li>
         <div class="csv-detail-head"><span>${shortDate(r[0])}</span><span class="entry-name">${esc(r[2] || "?")}</span><b class="${r[1] > 0 ? "pos" : ""}">${this._moneyPlain(r[1])}</b></div>
-        <div class="csv-detail-text">${esc([r[4] || r[3], r[6]?.slice(0, 90)].filter(Boolean).join(" · "))}</div></li>`).join("")}</ul>
+        <div class="csv-detail-text assign-line"><span>${esc([r[4] || r[3], r[6]?.slice(0, 90)].filter(Boolean).join(" · "))}</span>${assignChip(r)}</div></li>`).join("")}</ul>
     </div>` : "";
     const categories = monthList || `<div class="card">
       ${month ? `<div class="row-between stats-head"><h3>${tr(`Ausgaben ${monthLabel}`, `Spending ${monthLabel}`)}</h3>${toggle}</div>` : `<h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>`}
@@ -1363,7 +1378,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             const sum = hits.reduce((t, r) => t - r[1], 0);
             bookingsList = `<div class="stats-bookings">
               <div class="row-between"><h4>${esc(pick.name)} · ${hits.length === 1 ? tr("1 Buchung", "1 booking") : tr(`${hits.length} Buchungen`, `${hits.length} bookings`)}</h4><span>${this._moneyPlain(sum)}</span></div>
-              <ul>${shown.map((r) => `<li><div class="csv-detail-head"><span>${shortDate(r[0])}</span><b>${this._moneyPlain(r[1])}</b>${pick.kind === "payee" ? (r[4] ? `<span class="what">${esc(r[4])}</span>` : "") : `<span class="what">${esc(r[2] || "")}</span>`}</div>${r[6] ? `<div class="csv-detail-text">${esc(r[6].slice(0, 100))}</div>` : ""}</li>`).join("")}</ul>
+              <ul>${shown.map((r) => `<li><div class="csv-detail-head"><span>${shortDate(r[0])}</span><b>${this._moneyPlain(r[1])}</b>${pick.kind === "payee" ? (r[4] ? `<span class="what">${esc(r[4])}</span>` : "") : `<span class="what">${esc(r[2] || "")}</span>`}</div><div class="csv-detail-text assign-line"><span>${esc((r[6] || "").slice(0, 100))}</span>${assignChip(r)}</div></li>`).join("")}</ul>
               ${hits.length > shown.length ? `<button class="link" data-action="stats-more">${tr(`alle ${hits.length} anzeigen`, `show all ${hits.length}`)}</button>` : ""}
             </div>`;
           }
@@ -1542,6 +1557,35 @@ class HaushaltsbuchPanel extends HTMLElement {
       <div class="dialog-actions">${x.id ? `<button type="button" class="danger" data-action="spending-delete" data-item="${esc(d.item_id)}" data-id="${esc(x.id)}">${tr("Löschen", "Delete")}</button>` : "<span></span>"}<div>
         <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
         <button type="submit">${tr("Speichern", "Save")}</button>
+      </div></div>
+    </form>`;
+  }
+
+  _renderAssignForm(d) {
+    const r = d.row;
+    const direction = r[1] < 0 ? "expense" : "income";
+    const items = this._state.items.filter((i) => i.direction === direction || (direction === "expense" && i.schedule?.frequency === "budget"));
+    const budgets = direction === "expense" ? items.filter((i) => i.schedule?.frequency === "budget") : [];
+    const regular = items.filter((i) => !["budget", "once"].includes(i.schedule?.frequency));
+    const option = (i) => `<option value="${esc(i.id)}" ${d.target === i.id ? "selected" : ""}>${esc(i.name)}${i.editable === false ? ` (${esc(i.owner_name)})` : ""}</option>`;
+    return `<form data-form="assign">
+      <h2>${tr("Umsatz zuordnen", "Assign transaction")}</h2>
+      <div class="assign-row"><b>${this._moneyPlain(r[1])}</b> · ${fmtDate(r[0])}<br>${esc(r[2] || "?")}<div class="hint">${esc([r[4] || r[3], r[6]].filter(Boolean).join(" · "))}</div></div>
+      ${d.current ? `<p class="hint">${tr(`Schon zugeordnet zu „${esc(d.current)}“. Eine weitere Zuordnung kommt dazu, die alte bleibt. Falsche Budget-Ausgaben löschst du im Budget.`, `Already assigned to “${esc(d.current)}”. Another assignment is added; the old one stays. Remove wrong budget spendings in the budget.`)}</p>` : ""}
+      <div class="grid">
+        <label class="full">${tr("Gehört zu", "Belongs to")}<select name="target">
+          ${budgets.length ? `<optgroup label="${tr("Budgets", "Budgets")}">${budgets.map(option).join("")}</optgroup>` : ""}
+          ${regular.length ? `<optgroup label="${tr("Posten", "Entries")}">${regular.map(option).join("")}</optgroup>` : ""}
+          <option value="once" ${d.target === "once" || !items.length ? "selected" : ""}>${tr("Neuer einmaliger Posten", "New one-off entry")}</option>
+        </select></label>
+        <label class="full">${tr("Name, falls neuer Posten", "Name, if new entry")}<input name="name" maxlength="80" value="${esc(r[2] || "")}"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="remember" checked> ${tr(`Beim nächsten Import Umsätze von „${esc(r[2] || "?")}“ automatisch so zuordnen`, `Assign transactions from “${esc(r[2] || "?")}” like this on the next import`)}</label>
+      <p class="hint">${tr("Budget: wird als Ausgabe mit diesem Datum eingetragen. Posten: hakt den nächstgelegenen offenen Termin mit echtem Datum und Betrag ab.", "Budget: added as a spending on this date. Entry: confirms the nearest open date with the real date and amount.")}</p>
+      ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
+      <div class="dialog-actions"><span></span><div>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit">${tr("Zuordnen", "Assign")}</button>
       </div></div>
     </form>`;
   }
@@ -2237,6 +2281,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (d.type === "csv") body = this._renderCsvForm(d);
     if (d.type === "notice") body = this._renderNotice(d);
     if (d.type === "spending") body = this._renderSpendingForm(d);
+    if (d.type === "assign") body = this._renderAssignForm(d);
     return `<div class="overlay" data-action="close-overlay"><div class="dialog" role="dialog" aria-modal="true">${body}</div></div>`;
   }
 
@@ -2856,6 +2901,34 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._run(() =>
         this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: this._parsedAmount(f.get("actual_amount"), null) })
       );
+    } else if (kind === "assign") {
+      const f = new FormData(form);
+      const r = this._dialog.row;
+      const direction = r[1] < 0 ? "expense" : "income";
+      const amount = Math.abs(r[1]);
+      const target = f.get("target");
+      this._run(async () => {
+        if (target === "once") {
+          const item = { name: String(f.get("name") || r[2] || tr("Umsatz", "Transaction")).trim(), direction, amount, category: r[4] || r[3] || tr("Sonstiges", "Other"), icon: "mdi:receipt-text", start_date: r[0], schedule: { frequency: "once", interval: 1 }, confirmations: [{ due_date: r[0], status: "booked", actual_date: r[0], actual_amount: amount }] };
+          await this._ws("import", { data: { format: "haushaltsbuch", items: [item] }, replace: false });
+          return;
+        }
+        const item = this._state.items.find((i) => i.id === target);
+        const sync = { confirmations: [], spendings: [], keys: [], price_changes: [] };
+        if (item.schedule?.frequency === "budget") {
+          sync.spendings.push({ item_id: item.id, date: r[0], amount, note: r[2] || "" });
+        } else {
+          const day = parseIso(r[0]);
+          const scope = item.editable === false && item.household_id ? item.household_id : "me";
+          const around = await this._ws("forecast", { scope, start: iso(addDays(day, -45)), end: iso(addDays(day, 45)) });
+          const open = around.days.flatMap((x) => x.entries).filter((e) => e.item_id === item.id && e.status === null)
+            .sort((a, b) => Math.abs(daysBetween(a.date, r[0])) - Math.abs(daysBetween(b.date, r[0])))[0];
+          if (!open) throw new Error(tr(`„${item.name}“ hat um den ${shortDate(r[0])} keinen offenen Termin.`, `“${item.name}” has no open date around ${shortDate(r[0])}.`));
+          sync.confirmations.push({ item_id: item.id, due_date: open.due_date, actual_date: r[0], actual_amount: amount });
+        }
+        if (f.get("remember") && item.editable !== false) sync.keys.push({ item_id: item.id, key: `n:${nameKey(r[2] || "")}|${direction}` });
+        await this._ws("bank/sync", sync);
+      });
     } else if (kind === "csv") {
       const d = this._dialog;
       this._run(async () => {
@@ -3115,6 +3188,11 @@ class HaushaltsbuchPanel extends HTMLElement {
         break;
       case "stats-year":
         this._statsYear = target.dataset.year;
+        this._render();
+        break;
+      case "ledger-assign":
+        this._error = null;
+        this._dialog = { type: "assign", row: this._ledger.rows[Number(target.dataset.row)], current: target.dataset.current || "" };
         this._render();
         break;
       case "stats-month":
@@ -3540,6 +3618,11 @@ const STYLES = `
   .stats-col[disabled] { cursor: default; }
   .stats-col.dim { opacity: 0.4; }
   .stats-col.active .stats-col-label { color: var(--primary-color); font-weight: 600; }
+  .assign-line { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .assign-line > span { min-width: 0; }
+  .assign-chip { flex-shrink: 0; background: none; border: 1px dashed var(--divider-color); border-radius: 10px; padding: 1px 8px; font: inherit; font-size: 11px; color: var(--secondary-text-color); cursor: pointer; }
+  .assign-chip.set { border-style: solid; border-color: var(--primary-color); color: var(--primary-color); }
+  .assign-row { margin: 0 0 12px; }
   .stats-month { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--secondary-text-color); }
   .stats-month li { padding: 6px 0; border-top: 1px solid var(--divider-color); }
   .stats-month .csv-detail-head .entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

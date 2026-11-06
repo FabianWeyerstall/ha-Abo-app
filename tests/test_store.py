@@ -299,6 +299,9 @@ def test_bank_sync_confirms_spends_remembers_and_skips_duplicates():
     assert item["confirmations"][0]["actual_date"] == "2026-11-16"
     assert item["bank_keys"] == ["n:hausverwaltung|expense"]
     assert item["price_changes"] == [{"from": "2026-12-15", "amount": 870.0}]
+    history = book.bank_history("anna")
+    assert history[rent]["booked"] == [["2026-11-16", 850.0]]
+    assert history[food]["spendings"] == [["2026-11-20", 32.98]]
     # a second import of the same file changes nothing
     again = book.bank_sync("anna", payload)
     assert again["confirmed"] == 0 and again["spendings"] == 0 and again["skipped"] == 2 and again["keys"] == 0

@@ -353,6 +353,11 @@ class Book:
                 "bank_keys": item.get("bank_keys") or [],
                 "confirmed": [c["due_date"] for c in item.get("confirmations") or []],
                 "spendings": [[s["date"], s["amount"]] for s in item.get("spendings") or []],
+                "booked": [
+                    [c["actual_date"], c.get("actual_amount")]
+                    for c in item.get("confirmations") or []
+                    if c.get("actual_date")
+                ],
             }
             for item in self.visible_items(user_id)
         }
