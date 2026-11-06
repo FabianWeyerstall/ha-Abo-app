@@ -1241,34 +1241,34 @@ class HaushaltsbuchPanel extends HTMLElement {
     const account = accounts.includes(this._statsAccount) ? this._statsAccount : "all";
     const mine = account === "all" ? rows : rows.filter((r) => r[5] === account);
     const years = [...new Set(mine.map((r) => r[0].slice(0, 4)))].sort();
+    const monthsAll = [...new Set(mine.map((r) => r[0].slice(0, 7)))].sort();
     const year = this._statsYear === "all" || years.includes(this._statsYear) ? this._statsYear : years[years.length - 1];
     const all = year === "all";
     const lastDate = mine[mine.length - 1][0];
     const inYear = (r, y) => r[0].startsWith(y);
-    // A running year is compared with the same part of the year before.
-    const cutoff = !all && year === lastDate.slice(0, 4) ? lastDate.slice(5) : "12-31";
-    const prevYear = String(Number(year) - 1);
-    // A tapped month narrows the whole page to that month.
     const month = !all && this._statsMonth?.startsWith(`${year}-`) ? this._statsMonth : null;
+    const mode = all ? "all" : month ? "month" : "year";
+    // A running year is compared with the same part of the year before.
+    const running = mode === "year" ? year === lastDate.slice(0, 4) : mode === "month" && month === lastDate.slice(0, 7);
+    const cutoff = running ? lastDate.slice(5) : "12-31";
+    const prevYear = String(Number(year) - 1);
     const period = all ? mine : mine.filter((r) => (month ? r[0].startsWith(month) : inYear(r, year)));
-    const before = all || !years.includes(prevYear) ? null : month ? mine.filter((r) => r[0].startsWith(`${prevYear}-${month.slice(5)}`)) : mine.filter((r) => inYear(r, prevYear) && r[0].slice(5) <= cutoff);
+    const before = all || !years.includes(prevYear) ? null : month ? mine.filter((r) => r[0].startsWith(`${prevYear}-${month.slice(5)}`) && r[0].slice(5) <= cutoff) : mine.filter((r) => inYear(r, prevYear) && r[0].slice(5) <= cutoff);
     const sums = (list) => list.reduce((s, r) => (r[1] > 0 ? (s.income += r[1]) : (s.expense -= r[1]), s), { income: 0, expense: 0 });
     const now = sums(period);
-    const was = before && sums(before);
+    const was = before && before.length ? sums(before) : null;
     const fullYears = years.filter((y) => y !== lastDate.slice(0, 4) && mine.some((r) => r[0] < `${y}-02-01` && r[0] >= `${y}-01-01`));
     const perYear = all ? Math.max(1, daysBetween(mine[0][0], lastDate) / 365.25) : 1;
-    const change = (a, b) => (b ? Math.round(((a - b) / b) * 100) : null);
-    const delta = (a, b, goodWhenUp) => {
-      const pct = change(a, b);
+    const pctOf = (a, b) => (b ? Math.round(((a - b) / b) * 100) : null);
+    const badge = (pct, goodWhenUp, suffix = "") => {
       if (pct === null || !Number.isFinite(pct)) return "";
-      const up = pct > 0;
-      const cls = pct === 0 ? "" : up === goodWhenUp ? "pos" : "neg";
-      return `<span class="delta ${cls}">${up ? "+" : ""}${pct} %</span>`;
+      const cls = pct === 0 ? "" : pct > 0 === goodWhenUp ? "good" : "bad";
+      return `<span class="badge ${cls}">${pct > 0 ? "▲ " : pct < 0 ? "▼ " : ""}${Math.abs(pct)} %${suffix}</span>`;
     };
-    const monthLabel = month ? `${monthName(Number(month.slice(5)) - 1)} ${year}` : "";
-    const label = month ? monthLabel : all ? tr(`Ø pro Jahr seit ${years[0]}`, `avg per year since ${years[0]}`) : cutoff !== "12-31" ? tr(`${year} bis ${shortDay(lastDate)}`, `${year} until ${shortDay(lastDate)}`) : year;
-    const vs = was && month ? `<div class="hint">${tr(`ggü. ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`, `vs ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`)}</div>` : was ? `<div class="hint">${tr(`ggü. ${prevYear}${cutoff !== "12-31" ? ` bis ${shortDay(lastDate)}` : ""}`, `vs ${prevYear}${cutoff !== "12-31" ? ` until ${shortDay(lastDate)}` : ""}`)}</div>` : "";
+    const monthLabel = (key) => `${monthName(Number(key.slice(5)) - 1)} ${key.slice(0, 4)}`;
     const rest = now.income - now.expense;
+    const insights = this._statsTab === "insights";
+
     // Where a transaction went: budget spending or confirmed booking of an entry.
     const indexOf = new Map(rows.map((r, i) => [r, i]));
     const itemNames = Object.fromEntries(this._state.items.map((i) => [i.id, i.name]));
@@ -1281,49 +1281,114 @@ class HaushaltsbuchPanel extends HTMLElement {
       return `<button class="assign-chip ${name ? "set" : ""}" data-action="ledger-assign" data-row="${indexOf.get(r)}" data-current="${esc(name || "")}">${name ? `→ ${esc(name)}` : tr("zuordnen", "assign")}</button>`;
     };
 
-    const insights = this._statsTab === "insights";
-    const tiles = `<div class="card">
-      <div class="row-between stats-head">
-        <h3>${tr("Statistik", "Statistics")} · ${esc(label)}</h3>
-        <div class="segmented" role="tablist">
-          <button class="${insights ? "" : "active"}" data-action="stats-tab" data-tab="numbers">${tr("Zahlen", "Numbers")}</button>
-          <button class="${insights ? "active" : ""}" data-action="stats-tab" data-tab="insights">${tr("Auswertungen", "Insights")}</button>
+    // Top: period, navigation, account, tabs.
+    const steps = mode === "month" ? monthsAll : mode === "year" ? years : [];
+    const at = steps.indexOf(mode === "month" ? month : year);
+    const prev = at > 0 ? steps[at - 1] : null;
+    const next = at >= 0 && at < steps.length - 1 ? steps[at + 1] : null;
+    const navLabel = mode === "month" ? monthLabel(month) : mode === "year" ? year : tr(`seit ${years[0]}`, `since ${years[0]}`);
+    const pill = (p, text) => `<button class="${mode === p ? "on" : ""}" data-action="stats-period" data-period="${p}">${text}</button>`;
+    const top = `<div class="st-top">
+        <div class="st-pills" role="tablist">${pill("month", tr("Monat", "Month"))}${pill("year", tr("Jahr", "Year"))}${pill("all", tr("Alle Jahre", "All years"))}</div>
+        <div class="st-nav">
+          ${mode === "all" ? "" : `<button class="st-arrow" ${prev ? `data-action="stats-step" data-to="${prev}"` : "disabled"} aria-label="${tr("zurück", "back")}">‹</button>`}
+          <span>${esc(navLabel)}</span>
+          ${mode === "all" ? "" : `<button class="st-arrow" ${next ? `data-action="stats-step" data-to="${next}"` : "disabled"} aria-label="${tr("weiter", "next")}">›</button>`}
         </div>
-        <div class="stats-filters">
-          <select data-change="stats-year" aria-label="${tr("Jahr", "Year")}">
-            <option value="all" ${all ? "selected" : ""}>${tr("Alle Jahre", "All years")}</option>
-            ${[...years].reverse().map((y) => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("")}
-          </select>
-          ${accounts.length > 1 ? `<select data-change="stats-account" aria-label="${tr("Konto", "Account")}">
-            <option value="all">${tr("Alle Konten", "All accounts")}</option>
-            ${accounts.map((a) => `<option value="${esc(a)}" ${a === account ? "selected" : ""}>${tr("Konto", "Account")} …${esc(a.slice(-4))}</option>`).join("")}
-          </select>` : ""}
-        </div>
+        ${accounts.length > 1 ? `<select class="st-chip" data-change="stats-account" aria-label="${tr("Konto", "Account")}">
+          <option value="all">${tr("Alle Konten", "All accounts")}</option>
+          ${accounts.map((a) => `<option value="${esc(a)}" ${a === account ? "selected" : ""}>${tr("Konto", "Account")} …${esc(a.slice(-4))}</option>`).join("")}
+        </select>` : ""}
       </div>
-      <div class="totals">
-        <div><div class="label">${tr("Eingenommen", "Income")}</div><div class="big pos">${this._money(now.income / perYear)}</div>${was ? delta(now.income, was.income, true) : ""}</div>
-        <div><div class="label">${tr("Ausgegeben", "Spent")}</div><div class="big neg">${this._money(now.expense / perYear)}</div>${was ? delta(now.expense, was.expense, false) : ""}</div>
-        <div><div class="label">${tr("Übrig", "Left over")}</div><div class="big ${rest < 0 ? "neg" : ""}">${this._money(rest / perYear)}</div>${now.income ? `<div class="hint">${tr(`${Math.round((rest / now.income) * 100)} % vom Einkommen`, `${Math.round((rest / now.income) * 100)} % of income`)}</div>` : ""}</div>
+      <div class="st-tabs" role="tablist">
+        <button class="${insights ? "" : "on"}" data-action="stats-tab" data-tab="numbers">${tr("Zahlen", "Numbers")}</button>
+        <button class="${insights ? "on" : ""}" data-action="stats-tab" data-tab="insights">${tr("Auswertungen", "Insights")}</button>
+      </div>`;
+
+    const manage = `<div class="card st-card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar. Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you. Transfers between your accounts are not counted.`)}</p>
+      <button class="secondary small" data-action="stats-clear">${tr("Alle löschen", "Delete all")}</button></div></div>`;
+    const insightCards = this._renderInsights(mine, lastDate, year, all);
+    if (insights) return top + `<div class="st-grid single">${insightCards}</div>` + manage;
+
+    // Hero: what is left, with income and spending beside it.
+    const heroLabel = mode === "month" ? (running ? tr(`Übrig im ${monthLabel(month)} bis ${shortDay(lastDate)}`, `Left over in ${monthLabel(month)} until ${shortDay(lastDate)}`) : tr(`Übrig im ${monthLabel(month)}`, `Left over in ${monthLabel(month)}`))
+      : mode === "year" ? (cutoff !== "12-31" ? tr(`Übrig ${year} bis ${shortDay(lastDate)}`, `Left over ${year} until ${shortDay(lastDate)}`) : tr(`Übrig ${year}`, `Left over ${year}`))
+      : tr(`Übrig pro Jahr, Ø seit ${years[0]}`, `Left over per year, avg since ${years[0]}`);
+    const vsLabel = mode === "month" ? `${monthName(Number(month.slice(5)) - 1)} ${prevYear}` : prevYear;
+    const restDiff = was ? rest - (was.income - was.expense) : null;
+    const share = now.income ? Math.round((rest / now.income) * 100) : null;
+    // Small trend lines: the buckets around the chosen period.
+    const sparkKeys = mode === "all" ? years : mode === "year" ? monthsAll.filter((m) => m.startsWith(year)) : monthsAll.slice(Math.max(0, monthsAll.indexOf(month) - 11), monthsAll.indexOf(month) + 1);
+    const sparkSums = sparkKeys.map((k) => sums(mine.filter((r) => r[0].startsWith(k))));
+    const spark = (values, color) => {
+      if (values.length < 2) return "";
+      const lo = Math.min(...values);
+      const hi = Math.max(...values);
+      const pts = values.map((v, i) => `${(i / (values.length - 1)) * 100},${hi === lo ? 15 : 27 - ((v - lo) / (hi - lo)) * 24}`).join(" ");
+      return `<svg class="st-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" points="${pts}"/></svg>`;
+    };
+    const hero = `<div class="card st-card st-hero">
+      <div>
+        <div class="st-label">${esc(heroLabel)}</div>
+        <div class="st-big-row"><span class="st-big ${rest < 0 ? "neg" : ""}">${this._money(rest / perYear)}</span>
+          ${restDiff !== null && Math.abs(restDiff) >= 1 ? `<span class="badge ${restDiff > 0 ? "good" : "bad"}">${restDiff > 0 ? "▲" : "▼"} ${this._moneyPlain(Math.abs(restDiff))} ${tr(`ggü. ${vsLabel}`, `vs ${vsLabel}`)}</span>` : ""}</div>
+        <div class="hint">${share === null ? "" : rest >= 0 ? tr(`Du hast ${share} % deines Einkommens behalten.`, `You kept ${share} % of your income.`) : tr(`Du hast ${this._moneyPlain(-rest / perYear)} mehr ausgegeben als eingenommen.`, `You spent ${this._moneyPlain(-rest / perYear)} more than you earned.`)}</div>
       </div>
-      ${vs}
-      <p class="hint">${tr(`Aus ${mine.length} gespeicherten Umsätzen. Umbuchungen zwischen deinen Konten zählen nicht mit.`, `From ${mine.length} saved transactions. Transfers between your accounts are not counted.`)}</p>
+      ${share !== null ? `<div class="st-rate"><div class="st-rate-bar"><span style="width:${Math.max(0, Math.min(100, share))}%"></span></div><span class="hint">${tr(`Sparquote ${share} %`, `Savings rate ${share} %`)}</span></div>` : ""}
+      <div class="st-kpis">
+        <div class="st-kpi"><span class="st-label">${tr("Eingenommen", "Income")}</span><span class="st-kpi-v">${this._money(now.income / perYear)}</span>${was ? badge(pctOf(now.income, was.income), true) : ""}${spark(sparkSums.map((s) => s.income), "var(--success-color, #1baf7a)")}</div>
+        <div class="st-kpi"><span class="st-label">${tr("Ausgegeben", "Spent")}</span><span class="st-kpi-v">${this._money(now.expense / perYear)}</span>${was ? badge(pctOf(now.expense, was.expense), false) : ""}${spark(sparkSums.map((s) => s.expense), "var(--error-color, #e34948)")}</div>
+      </div>
     </div>`;
 
-    // Over time: years, or the months of the chosen year.
-    const buckets = all ? years.map((y) => [y, y]) : Array.from({ length: 12 }, (_, i) => [`${year}-${String(i + 1).padStart(2, "0")}`, monthName(i, "short")]);
+    // History: years, or the months of the year.
+    const buckets = all ? years.map((y) => [y, y]) : Array.from({ length: 12 }, (_, i) => [`${year}-${String(i + 1).padStart(2, "0")}`, monthName(i, "short").slice(0, 3)]);
     const bucketSums = buckets.map(([key, name]) => ({ key, name, ...sums(mine.filter((r) => r[0].startsWith(key))) }));
     const peak = Math.max(1, ...bucketSums.map((b) => Math.max(b.income, b.expense)));
-    const history = `<div class="card">
-      <h3>${all ? tr("Verlauf pro Jahr", "By year") : tr(`Verlauf ${year}`, `${year} by month`)}</h3>
-      <div class="stats-columns">${bucketSums
-        .map((b) => `<button class="stats-col ${b.key === month ? "active" : ""} ${month && b.key !== month ? "dim" : ""}" ${all ? `data-action="stats-year" data-year="${b.key}"` : b.income || b.expense ? `data-action="stats-month" data-month="${b.key}"` : "disabled"} title="${esc(b.name)}">
-          <div class="stats-bars"><span class="bar-in" style="height:${(b.income / peak) * 100}%"></span><span class="bar-out" style="height:${(b.expense / peak) * 100}%"></span></div>
-          <span class="stats-col-label">${esc(b.name)}</span></button>`)
-        .join("")}</div>
-      <p class="hint"><span class="legend in"></span>${tr("eingenommen", "income")} <span class="legend out"></span>${tr("ausgegeben", "spent")}${all ? tr(" · Tippe auf ein Jahr für die Monate.", " · Tap a year for its months.") : month ? tr(" · Monat nochmal antippen zeigt wieder das ganze Jahr.", " · Tap the month again for the whole year.") : tr(" · Tippe auf einen Monat für seine Umsätze.", " · Tap a month for its transactions.")}</p>
+    const magnitude = Math.pow(10, Math.floor(Math.log10(peak / 3)));
+    const step = [1, 2, 2.5, 5, 10].map((f) => f * magnitude).find((s) => s * 3 >= peak) || magnitude * 10;
+    const axisMax = step * Math.ceil(peak / step);
+    const compact = new Intl.NumberFormat(this._numberLocale(), { notation: "compact", maximumFractionDigits: 1 });
+    const W = 360;
+    const H = 150;
+    const T = 8;
+    const left = 30;
+    const slot = (W - left) / buckets.length;
+    const barW = Math.max(3, Math.min(12, slot * 0.3));
+    const selected = mode === "month" ? month : null;
+    let chart = "";
+    for (let v = 0; v <= axisMax + 0.1; v += step) {
+      const y = T + H - (v / axisMax) * H;
+      chart += `<line x1="${left}" x2="${W}" y1="${y}" y2="${y}" class="st-grid-line"/><text x="0" y="${y + 4}" class="st-axis">${v ? compact.format(v) : "0"}</text>`;
+    }
+    const bar = (x, value, cls) => {
+      const h = (value / axisMax) * H;
+      if (h <= 0) return "";
+      const r = Math.min(barW / 2, 4, h);
+      return `<path class="${cls}" d="M${x},${T + H} v${-(h - r)} q0,${-r} ${r},${-r} h${barW - 2 * r} q${r},0 ${r},${r} v${h - r} z"/>`;
+    };
+    bucketSums.forEach((b, i) => {
+      const x = left + i * slot + (slot - (2 * barW + 2)) / 2;
+      const on = b.key === selected;
+      const dim = selected && !on;
+      const target = all ? `data-action="stats-step" data-to="${b.key}"` : b.income || b.expense ? `data-action="stats-month" data-month="${b.key}"` : "";
+      chart += `<g class="st-col ${on ? "on" : ""} ${dim ? "dim" : ""}" ${target}>
+        ${on ? `<rect class="st-col-hl" x="${left + i * slot + 2}" y="${T}" width="${slot - 4}" height="${H}" rx="8"/>` : ""}
+        <rect class="st-hit" x="${left + i * slot}" y="0" width="${slot}" height="${H + T + 22}"/>
+        ${bar(x, b.income, "st-in")}${bar(x + barW + 2, b.expense, "st-out")}
+        <text x="${left + i * slot + slot / 2}" y="${T + H + 16}" class="st-axis st-xl ${on ? "on" : ""}" text-anchor="middle">${esc(all ? `’${b.name.slice(2)}` : b.name)}</text>
+        <title>${esc(all ? b.key : monthLabel(b.key))}: +${Math.round(b.income)} / −${Math.round(b.expense)}</title></g>`;
+    });
+    const sel = selected ? bucketSums.find((b) => b.key === selected) : null;
+    const history = `<div class="card st-card">
+      <div class="st-head"><h3>${all ? tr("Verlauf pro Jahr", "By year") : tr(`Monatsverlauf ${year}`, `${year} by month`)}</h3>
+        <div class="st-legend"><span style="--c:var(--success-color, #1baf7a)">${tr("ein", "in")}</span><span style="--c:var(--error-color, #e34948)">${tr("aus", "out")}</span></div></div>
+      <svg class="st-chart" viewBox="0 0 ${W} ${T + H + 24}" role="img" aria-label="${tr("Einnahmen und Ausgaben", "Income and spending")}">${chart}</svg>
+      ${sel ? `<div class="st-sel"><b>${esc(monthLabel(sel.key))}</b><span class="pos">+${this._moneyPlain(sel.income)}</span><span class="neg">−${this._moneyPlain(sel.expense)}</span><span>= ${this._moneyPlain(sel.income - sel.expense)} ${tr("übrig", "left")}</span></div>` : ""}
+      <p class="hint">${all ? tr("Tippe auf ein Jahr für seine Monate.", "Tap a year for its months.") : mode === "month" ? tr("Gewählten Monat nochmal antippen zeigt das ganze Jahr.", "Tap the chosen month again for the whole year.") : tr("Tippe auf einen Monat für seine Umsätze.", "Tap a month for its transactions.")}</p>
     </div>`;
 
-    // Categories: main category with sub categories and the biggest payees.
+    // Categories: ring + list, each with sub categories, payees and bookings.
     const group = (list) => {
       const map = new Map();
       for (const r of list) {
@@ -1341,68 +1406,101 @@ class HaushaltsbuchPanel extends HTMLElement {
     };
     const cats = [...group(period).values()].sort((a, b) => b.total - a.total);
     const prevCats = before ? group(before) : null;
-    // All years: how a category developed from the first to the last full year.
     const firstFull = fullYears[0];
     const lastFull = fullYears[fullYears.length - 1];
     const trendCats = all && firstFull && lastFull && firstFull !== lastFull ? [group(mine.filter((r) => inYear(r, firstFull))), group(mine.filter((r) => inYear(r, lastFull)))] : null;
-    const top = Math.max(1, ...cats.map((c) => c.total));
-    const mode = month ? this._statsMode || "list" : "cats";
-    const toggle = month ? `<div class="segmented" role="tablist">
-        <button class="${mode === "list" ? "active" : ""}" data-action="stats-mode" data-mode="list">${tr("Umsätze", "Transactions")}</button>
-        <button class="${mode === "cats" ? "active" : ""}" data-action="stats-mode" data-mode="cats">${tr("Nach Kategorie", "By category")}</button>
-      </div>` : "";
-    const monthList = month && mode === "list" ? `<div class="card">
-      <div class="row-between stats-head"><h3>${tr(`Umsätze ${monthLabel}`, `Transactions ${monthLabel}`)}</h3>${toggle}</div>
-      <ul class="stats-month">${[...period].sort((a, b) => b[0].localeCompare(a[0]) || a[1] - b[1]).map((r) => `<li>
-        <div class="csv-detail-head"><span>${shortDate(r[0])}</span><span class="entry-name">${esc(r[2] || "?")}</span><b class="${r[1] > 0 ? "pos" : ""}">${this._moneyPlain(r[1])}</b></div>
-        <div class="csv-detail-text assign-line"><span>${esc([r[4] || r[3], r[6]?.slice(0, 90)].filter(Boolean).join(" · "))}</span>${assignChip(r)}</div></li>`).join("")}</ul>
-    </div>` : "";
-    const categories = monthList || `<div class="card">
-      ${month ? `<div class="row-between stats-head"><h3>${tr(`Ausgaben ${monthLabel}`, `Spending ${monthLabel}`)}</h3>${toggle}</div>` : `<h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>`}
-      <p class="hint">${all ? tr(`Durchschnitt pro Jahr${trendCats ? `, daneben ${firstFull} → ${lastFull}` : ""}.`, `Average per year${trendCats ? `, next to it ${firstFull} → ${lastFull}` : ""}.`) : tr("Tippe auf eine Kategorie für Unterkategorien und Empfänger, und darin auf einen Eintrag für die einzelnen Buchungen.", "Tap a category for sub categories and payees, then on an entry for its bookings.")}</p>
-      ${cats
-        .map((c) => {
-          const open = this._statsOpen === c.name;
-          const trend = trendCats ? (() => {
-            const a = trendCats[0].get(c.name)?.total || 0;
-            const b = trendCats[1].get(c.name)?.total || 0;
-            return a && b ? `<span class="stats-trend">${this._moneyPlain(a)} → ${this._moneyPlain(b)} ${delta(b, a, false)}</span>` : "";
-          })() : prevCats ? delta(c.total, prevCats.get(c.name)?.total || 0, false) : "";
-          const pick = open ? this._statsPick : null;
-          const list = (map, kind) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, v]) => {
-            const active = pick?.kind === kind && pick.name === n;
-            return `<button class="stats-sub ${active ? "active" : ""}" data-action="stats-pick" data-kind="${kind}" data-name="${esc(n)}"><span>${esc(n)}</span><span>${this._moneyPlain(v / perYear)}</span></button>`;
-          }).join("");
-          // The bookings behind a tapped sub category or payee.
-          let bookingsList = "";
-          if (pick) {
-            const hits = period
-              .filter((r) => r[1] < 0 && (r[3] || r[4] || tr("Ohne Kategorie", "Uncategorised")) === c.name && (pick.kind === "sub" ? (r[4] || c.name) === pick.name : (r[2] || "?") === pick.name))
-              .sort((a, b) => b[0].localeCompare(a[0]));
-            const shown = hits.slice(0, this._statsMore ? hits.length : 40);
-            const sum = hits.reduce((t, r) => t - r[1], 0);
-            bookingsList = `<div class="stats-bookings">
-              <div class="row-between"><h4>${esc(pick.name)} · ${hits.length === 1 ? tr("1 Buchung", "1 booking") : tr(`${hits.length} Buchungen`, `${hits.length} bookings`)}</h4><span>${this._moneyPlain(sum)}</span></div>
-              <ul>${shown.map((r) => `<li><div class="csv-detail-head"><span>${shortDate(r[0])}</span><b>${this._moneyPlain(r[1])}</b>${pick.kind === "payee" ? (r[4] ? `<span class="what">${esc(r[4])}</span>` : "") : `<span class="what">${esc(r[2] || "")}</span>`}</div><div class="csv-detail-text assign-line"><span>${esc((r[6] || "").slice(0, 100))}</span>${assignChip(r)}</div></li>`).join("")}</ul>
-              ${hits.length > shown.length ? `<button class="link" data-action="stats-more">${tr(`alle ${hits.length} anzeigen`, `show all ${hits.length}`)}</button>` : ""}
-            </div>`;
-          }
-          return `<div class="stats-cat ${open ? "open" : ""}">
-            <div class="stats-cat-row" role="button" tabindex="0" data-action="stats-cat" data-cat="${esc(c.name)}">
-              <div class="stats-cat-main"><div class="row-between"><span class="entry-name">${esc(c.name)}</span><span>${this._moneyPlain(c.total / perYear)}</span></div>
-              <div class="bar-line"><span class="bar neg-bar" style="width:${(c.total / top) * 100}%"></span></div></div>
-              <div class="stats-cat-side">${trend}</div>
-            </div>
-            ${open ? `<div class="stats-detail"><div><h4>${tr("Unterkategorien", "Sub categories")}</h4>${list(c.subs, "sub")}</div><div><h4>${tr("Größte Empfänger", "Biggest payees")}</h4>${list(c.payees, "payee")}</div></div>${bookingsList}` : ""}
-          </div>`;
-        })
-        .join("")}
+    const colorOf = new Map(cats.map((c, i) => [c.name, i < 6 ? `var(--viz-${i + 1})` : "var(--viz-other)"]));
+    const totalOut = cats.reduce((a, c) => a + c.total, 0);
+    const slices = [...cats.slice(0, 6), ...(cats.length > 6 ? [{ name: "", total: cats.slice(6).reduce((a, c) => a + c.total, 0), other: true }] : [])];
+    let ring = "";
+    let a0 = -Math.PI / 2;
+    const R = 58;
+    const r0 = 41;
+    for (const s of slices) {
+      if (!s.total) continue;
+      const a1 = a0 + (s.total / totalOut) * 2 * Math.PI;
+      const gap = slices.length > 1 ? 0.03 : 0;
+      const s0 = a0 + gap / 2;
+      const s1 = Math.max(s0 + 0.001, a1 - gap / 2);
+      const p = (a, rr) => `${(66 + rr * Math.cos(a)).toFixed(2)},${(66 + rr * Math.sin(a)).toFixed(2)}`;
+      const large = s1 - s0 > Math.PI ? 1 : 0;
+      ring += slices.length === 1
+        ? `<circle cx="66" cy="66" r="${(R + r0) / 2}" fill="none" stroke="${s.other ? "var(--viz-other)" : colorOf.get(s.name)}" stroke-width="${R - r0}"/>`
+        : `<path d="M${p(s0, R)} A${R},${R} 0 ${large} 1 ${p(s1, R)} L${p(s1, r0)} A${r0},${r0} 0 ${large} 0 ${p(s0, r0)} Z" fill="${s.other ? "var(--viz-other)" : colorOf.get(s.name)}"/>`;
+      a0 = a1;
+    }
+    ring += `<text x="66" y="61" text-anchor="middle" class="st-ring-l">${all ? tr("Ø JAHR", "AVG YEAR") : tr("GESAMT", "TOTAL")}</text><text x="66" y="79" text-anchor="middle" class="st-ring-v">${esc(compact.format(totalOut / perYear))} ${esc(this._state.currency === "EUR" ? "€" : this._state.currency)}</text>`;
+    const catRows = cats.map((c) => {
+      const open = this._statsOpen === c.name;
+      let side = "";
+      if (trendCats) {
+        const a = trendCats[0].get(c.name)?.total || 0;
+        const b = trendCats[1].get(c.name)?.total || 0;
+        side = a && b ? badge(pctOf(b, a), false) : "";
+      } else if (prevCats) side = badge(pctOf(c.total, prevCats.get(c.name)?.total || 0), false);
+      const pick = open ? this._statsPick : null;
+      const list = (map, kind) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, v]) => {
+        const active = pick?.kind === kind && pick.name === n;
+        return `<button class="stats-sub ${active ? "active" : ""}" data-action="stats-pick" data-kind="${kind}" data-name="${esc(n)}"><span>${esc(n)}</span><span>${this._moneyPlain(v / perYear)}</span></button>`;
+      }).join("");
+      let bookingsList = "";
+      if (pick) {
+        const hits = period
+          .filter((r) => r[1] < 0 && (r[3] || r[4] || tr("Ohne Kategorie", "Uncategorised")) === c.name && (pick.kind === "sub" ? (r[4] || c.name) === pick.name : (r[2] || "?") === pick.name))
+          .sort((a, b) => b[0].localeCompare(a[0]));
+        const shown = hits.slice(0, this._statsMore ? hits.length : 40);
+        const sum = hits.reduce((t, r) => t - r[1], 0);
+        bookingsList = `<div class="stats-bookings">
+          <div class="row-between"><h4>${esc(pick.name)} · ${hits.length === 1 ? tr("1 Buchung", "1 booking") : tr(`${hits.length} Buchungen`, `${hits.length} bookings`)}</h4><span>${this._moneyPlain(sum)}</span></div>
+          <ul>${shown.map((r) => `<li><div class="csv-detail-head"><span>${shortDate(r[0])}</span><b>${this._moneyPlain(r[1])}</b>${pick.kind === "payee" ? (r[4] ? `<span class="what">${esc(r[4])}</span>` : "") : `<span class="what">${esc(r[2] || "")}</span>`}</div><div class="csv-detail-text assign-line"><span>${esc((r[6] || "").slice(0, 100))}</span>${assignChip(r)}</div></li>`).join("")}</ul>
+          ${hits.length > shown.length ? `<button class="link" data-action="stats-more">${tr(`alle ${hits.length} anzeigen`, `show all ${hits.length}`)}</button>` : ""}
+        </div>`;
+      }
+      return `<div class="st-cat ${open ? "open" : ""}">
+        <button class="st-cat-row" data-action="stats-cat" data-cat="${esc(c.name)}" aria-expanded="${open}">
+          <span class="st-dot" style="--c:${colorOf.get(c.name)}"></span>
+          <span class="st-cat-n">${esc(c.name)}</span>
+          <span class="st-cat-a">${this._moneyPlain(c.total / perYear)}</span>
+          <span class="st-cat-d">${side}</span>
+        </button>
+        ${open ? `<div class="stats-detail"><div><h4>${tr("Unterkategorien", "Sub categories")}</h4>${list(c.subs, "sub")}</div><div><h4>${tr("Größte Empfänger", "Biggest payees")}</h4>${list(c.payees, "payee")}</div></div>${bookingsList}` : ""}
+      </div>`;
+    }).join("");
+    const categories = `<div class="card st-card">
+      <div class="st-head"><h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3><span class="hint">${trendCats ? `${firstFull} → ${lastFull}` : prevCats ? tr(`ggü. ${vsLabel}`, `vs ${vsLabel}`) : ""}</span></div>
+      ${cats.length ? `<div class="st-donut"><svg viewBox="0 0 132 132" role="img" aria-label="${tr("Anteile der Kategorien", "Category shares")}">${ring}</svg><div class="st-cats">${catRows}</div></div>
+      <p class="hint">${tr("Antippen zeigt Unterkategorien und Empfänger, darin ein Eintrag die einzelnen Buchungen.", "Tap for sub categories and payees, then an entry for its bookings.")}</p>` : `<p class="hint">${tr("Keine Ausgaben in diesem Zeitraum.", "No spending in this period.")}</p>`}
     </div>`;
 
-    const manage = `<div class="card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you.`)}</p>
-      <button class="secondary small" data-action="stats-clear">${tr("Alle löschen", "Delete all")}</button></div></div>`;
-    if (insights) return tiles + this._renderInsights(mine, lastDate, year, all) + manage;
-    return tiles + history + categories + manage;
+    // At a glance: the insights in one line each.
+    const glance = `<div class="card st-card">
+      <div class="st-head"><h3>${tr("Auf einen Blick", "At a glance")}</h3><button class="link" data-action="stats-tab" data-tab="insights">${tr("alle Auswertungen ›", "all insights ›")}</button></div>
+      <div class="st-tiles">${(this._insightTiles || []).map((t) => `<button class="st-tile" style="--c:var(--viz-${t.color})" data-action="stats-tab" data-tab="insights">
+          <span class="st-tile-ic">${this._icon(t.icon, 18)}</span><span class="st-tile-t">${esc(t.title)}</span><span class="st-tile-v">${t.value}</span></button>`).join("")}</div>
+    </div>`;
+
+    // Transactions of the chosen month, by day.
+    let txCard = "";
+    if (mode === "month") {
+      const byDay = new Map();
+      for (const r of [...period].sort((a, b) => b[0].localeCompare(a[0]) || a[1] - b[1])) {
+        if (!byDay.has(r[0])) byDay.set(r[0], []);
+        byDay.get(r[0]).push(r);
+      }
+      txCard = `<div class="card st-card st-span">
+        <div class="st-head"><h3>${tr(`Umsätze ${monthLabel(month)}`, `Transactions ${monthLabel(month)}`)}</h3><span class="hint">${period.length === 1 ? tr("1 Buchung", "1 booking") : tr(`${period.length} Buchungen`, `${period.length} bookings`)}</span></div>
+        ${[...byDay.entries()].map(([day, list]) => `<div class="st-day">${esc(fmtDate(day, { weekday: "short", day: "numeric", month: "long" }))}</div>
+          ${list.map((r) => {
+            const cat = r[3] || r[4] || tr("Ohne Kategorie", "Uncategorised");
+            const c = r[1] > 0 ? "var(--success-color, #1baf7a)" : colorOf.get(cat) || "var(--viz-other)";
+            return `<div class="st-tx"><span class="st-av" style="--c:${c}">${esc((r[2] || "?").trim().charAt(0).toUpperCase())}</span>
+              <div class="st-tx-main"><div class="st-tx-n">${esc(r[2] || "?")}</div><div class="st-tx-m"><span>${esc(r[4] || r[3] || "")}</span>${assignChip(r)}</div>${r[6] ? `<div class="st-tx-p">${esc(r[6].slice(0, 90))}</div>` : ""}</div>
+              <span class="st-tx-a ${r[1] > 0 ? "pos" : ""}">${r[1] > 0 ? "+" : ""}${this._moneyPlain(r[1])}</span></div>`;
+          }).join("")}`).join("")}
+      </div>`;
+    }
+
+    return top + `<div class="st-grid">${hero}${history}${categories}${glance}${txCard}</div>` + manage;
   }
 
 
@@ -1454,6 +1552,9 @@ class HaushaltsbuchPanel extends HTMLElement {
     const missing = regular.filter((x) => x.now && !x.item && x.last.direction === "expense" && !ignored.has(x.g.key))
       .sort((a, b) => monthlyEquivalent(b.now) - monthlyEquivalent(a.now));
     this._insightSuggestions = Object.fromEntries(missing.map((x) => [x.g.key, x.now]));
+    const hidden = [...ignored].map((key) => ({ key, name: groups.get(key)?.list.slice(-1)[0]?.name || key.replace(/^n:/, "").replace(/\|expense$/, "") }));
+    const hiddenBlock = hidden.length ? `<div class="insight-hidden"><button class="link" data-action="insight-show-ignored">${this._showIgnored ? tr("Ausgeblendete verbergen", "Hide them again") : tr(`${hidden.length} mit „Ist ok“ ausgeblendet · anzeigen`, `${hidden.length} marked “fine” · show`)}</button>
+      ${this._showIgnored ? `<ul>${hidden.map((h) => `<li><span>${esc(h.name)}</span><button class="small secondary" data-action="insight-unignore" data-key="${esc(h.key)}">${tr("Wieder anzeigen", "Show again")}</button></li>`).join("")}</ul>` : ""}</div>` : "";
     const missingCard = card(
       tr("Vergessene Abos?", "Forgotten subscriptions?"),
       tr("Regelmäßige Abbuchungen der letzten zwei Jahre, die zu keinem deiner Posten gehören.", "Regular debits of the last two years that belong to none of your entries."),
@@ -1466,7 +1567,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             </div>
             <div class="entry-amount neg">${money(-now.amount)}</div></div>`).join("")}</div>`
         : empty(tr("Alles erfasst: Jede regelmäßige Abbuchung gehört zu einem Posten.", "All covered: every regular debit belongs to an entry.")),
-    );
+    ).replace(/<\/div>$/, () => `${hiddenBlock}</div>`);
 
     // 2. How the price of regular payments developed over the years.
     const prices = [];
@@ -1507,39 +1608,60 @@ class HaushaltsbuchPanel extends HTMLElement {
       const hits = mine.filter((r) => {
         if (r[1] >= 0 || r[0] < yearAgo) return false;
         const b = { date: r[0], amount: r[1], name: r[2] || "", purpose: r[6] || "", category: r[4] || r[3] || "" };
-        if (assigned.get(rowKey(b)) === budget.id) return true;
+        const owner = assigned.get(rowKey(b));
+        if (owner) return owner === budget.id;
         if (keys.has(`c:${b.category}`) || keys.has(`n:${nameKey(b.name)}|expense`)) return true;
         const words = wordsOf(`${b.category} ${b.name} ${b.purpose}`);
         if (stems.some((st) => words.some((w) => w.startsWith(st)))) return true;
         return generic && csvCategory(b).category === budget.category;
-      });
-      const perMonth = {};
-      for (const r of hits) perMonth[r[0].slice(0, 7)] = (perMonth[r[0].slice(0, 7)] || 0) - r[1];
-      const months = Math.max(1, Math.min(12, daysBetween(mine[0][0] > yearAgo ? mine[0][0] : yearAgo, lastDate) / 30.4));
-      const avg = Object.values(perMonth).reduce((a, v) => a + v, 0) / months;
-      const peak = Math.max(0, ...Object.values(perMonth));
+      }).map((r) => ({ date: r[0], amount: -r[1], name: r[2] || "?" }));
+      // Spending entered in the app (e.g. cash) counts as well.
+      const seen = new Set(hits.map((h) => `${h.date}|${h.amount.toFixed(2)}`));
+      for (const [date, amount] of history[budget.id]?.spendings || []) {
+        if (amount == null || date < yearAgo || date > lastDate || seen.has(`${date}|${Number(amount).toFixed(2)}`)) continue;
+        hits.push({ date, amount: Number(amount), name: tr("in der App eingetragen", "entered in the app") });
+      }
+      hits.sort((a, b) => b.date.localeCompare(a.date));
+      const from = mine[0][0] > yearAgo ? mine[0][0] : yearAgo;
+      const monthKeys = [];
+      for (let d = parseIso(`${from.slice(0, 7)}-01`); iso(d) <= lastDate; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) monthKeys.push(iso(d).slice(0, 7));
+      // The running month is incomplete and would pull the numbers down.
+      if (monthKeys.length > 1 && lastDate.slice(8) < "25") monthKeys.pop();
+      const perMonth = Object.fromEntries(monthKeys.map((m) => [m, 0]));
+      for (const h of hits) if (h.date.slice(0, 7) in perMonth) perMonth[h.date.slice(0, 7)] += h.amount;
+      const values = Object.values(perMonth);
+      const activeMonths = values.filter((v) => v > 0).length;
+      const typical = values.length ? median(values) : 0;
+      const peak = Math.max(0, ...values);
       const planned = Number(budget.current_amount ?? budget.amount) || 0;
-      const proposal = Math.ceil(avg / 10) * 10;
-      return { budget, count: hits.length, avg, peak, planned, proposal };
+      // Only propose when the payments clearly cover the budget: most months, enough payments.
+      const enough = hits.length >= 6 && values.length >= 3 && activeMonths >= Math.ceil(values.length * 0.75);
+      const proposal = Math.ceil(typical / 10) * 10;
+      return { budget, hits, count: hits.length, typical, peak, planned, enough, proposal, months: values.length, activeMonths, pot: planned === 0 };
     });
     const budgetCard = card(
       tr("Budgets aus echten Zahlen", "Budgets from real numbers"),
-      tr("Was du in den letzten 12 Monaten im Schnitt wirklich ausgegeben hast.", "What you really spent on average over the last 12 months."),
+      tr("Was du in einem typischen Monat der letzten 12 Monate wirklich ausgegeben hast. Einzelne teure Monate verzerren das nicht. Ein Vorschlag kommt nur, wenn in fast jedem Monat Zahlungen zum Budget gefunden wurden.", "What you really spent in a typical month of the last 12 months. Single expensive months don't distort it. A proposal only appears when payments were found in almost every month."),
       budgets.length
         ? `<div class="insight-list">${budgetRows.map((x) => {
-            const diff = x.planned ? Math.round(((x.avg - x.planned) / x.planned) * 100) : 0;
-            const tone = !x.count ? "" : diff > 10 ? "neg" : diff < -10 ? "pos" : "";
+            const diff = x.planned ? Math.round(((x.typical - x.planned) / x.planned) * 100) : 0;
+            const tone = diff > 10 ? "neg" : diff < -10 ? "pos" : "";
+            let meta;
+            if (x.pot) meta = x.count ? tr(`Sammeltopf · typisch ${this._moneyPlain(x.typical)} pro Monat · ${x.count} Zahlungen`, `Collection pot · typically ${this._moneyPlain(x.typical)} per month · ${x.count} payments`) : tr("Sammeltopf · keine passenden Umsätze gefunden", "Collection pot · no matching transactions found");
+            else if (!x.count) meta = tr(`geplant ${this._moneyPlain(x.planned)} · keine passenden Umsätze gefunden`, `planned ${this._moneyPlain(x.planned)} · no matching transactions found`);
+            else if (!x.enough) meta = tr(`geplant ${this._moneyPlain(x.planned)} · nur ${x.count === 1 ? "1 Zahlung" : `${x.count} Zahlungen`} in ${x.activeMonths} von ${x.months} Monaten erkannt, zu wenig für einen Vorschlag`, `planned ${this._moneyPlain(x.planned)} · only ${x.count} payments in ${x.activeMonths} of ${x.months} months found, too few for a proposal`);
+            else meta = tr(`geplant ${this._moneyPlain(x.planned)} · typisch ${this._moneyPlain(x.typical)} pro Monat · teuerster Monat ${this._moneyPlain(x.peak)} · ${x.count} Zahlungen`, `planned ${this._moneyPlain(x.planned)} · typically ${this._moneyPlain(x.typical)} per month · most expensive month ${this._moneyPlain(x.peak)} · ${x.count} payments`);
+            const propose = !x.pot && x.enough && x.budget.editable !== false && Math.abs(x.proposal - x.planned) >= Math.max(10, x.planned * 0.05);
+            const shown = x.hits.slice(0, 30);
             return `<div class="insight-row">
               <div class="entry-icon">${this._icon(x.budget.icon)}</div>
               <div class="entry-main"><div class="entry-name">${esc(x.budget.name)}</div>
-                <div class="entry-meta plain">${x.count
-                  ? tr(`geplant ${this._moneyPlain(x.planned)} · tatsächlich Ø ${this._moneyPlain(x.avg)} pro Monat · teuerster Monat ${this._moneyPlain(x.peak)} · ${x.count} Zahlungen`, `planned ${this._moneyPlain(x.planned)} · actually avg ${this._moneyPlain(x.avg)} per month · most expensive month ${this._moneyPlain(x.peak)} · ${x.count} payments`)
-                  : tr(`geplant ${this._moneyPlain(x.planned)} · keine passenden Umsätze gefunden`, `planned ${this._moneyPlain(x.planned)} · no matching transactions found`)}</div>
-                ${x.count && x.budget.editable !== false && Math.abs(x.proposal - x.planned) >= Math.max(10, x.planned * 0.05)
-                  ? `<div class="insight-actions"><button class="small" data-action="insight-budget" data-id="${esc(x.budget.id)}" data-amount="${x.proposal}">${tr(`Budget auf ${this._moneyPlain(x.proposal)} setzen`, `Set budget to ${this._moneyPlain(x.proposal)}`)}</button></div>`
-                  : ""}
+                <div class="entry-meta plain">${meta}</div>
+                ${!x.pot && x.count && !x.enough ? `<p class="hint">${tr("Ordne unter „Zahlen“ weitere Umsätze diesem Budget zu, dann wird der Vorschlag genauer.", "Assign more transactions to this budget under “Numbers” to get a proposal.")}</p>` : ""}
+                ${propose ? `<div class="insight-actions"><button class="small" data-action="insight-budget" data-id="${esc(x.budget.id)}" data-amount="${x.proposal}">${tr(`Budget auf ${this._moneyPlain(x.proposal)} setzen`, `Set budget to ${this._moneyPlain(x.proposal)}`)}</button></div>` : ""}
+                ${x.count ? `<details class="insight-hits"><summary>${tr("gezählte Zahlungen ansehen", "show counted payments")}</summary><ul>${shown.map((h) => `<li><span>${shortDate(h.date)}</span><span>${esc(h.name)}</span><b>${this._moneyPlain(h.amount)}</b></li>`).join("")}</ul>${x.hits.length > shown.length ? `<p class="hint">${tr(`und ${x.hits.length - shown.length} weitere`, `and ${x.hits.length - shown.length} more`)}</p>` : ""}</details>` : ""}
               </div>
-              ${x.count ? `<div class="insight-badge ${tone}">${diff > 0 ? "+" : ""}${diff} %</div>` : ""}</div>`;
+              ${!x.pot && x.enough ? `<div class="insight-badge ${tone}">${diff > 0 ? "+" : ""}${diff} %</div>` : ""}</div>`;
           }).join("")}</div>`
         : empty(tr("Du hast noch keine Budgets. Unter „Posten“ legst du eins an, z. B. für Lebensmittel.", "You have no budgets yet. Create one under “Entries”, e.g. for groceries.")),
     );
@@ -1548,6 +1670,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const years = [...new Set(mine.map((r) => r[0].slice(0, 4)))].sort();
     const fullYears = years.filter((y) => mine.some((r) => r[0].startsWith(`${y}-01`)) && mine.some((r) => r[0].startsWith(`${y}-12`)));
     let seasonCard;
+    let seasonTile = null;
     if (fullYears.length) {
       const perMonth = Array.from({ length: 12 }, () => 0);
       for (const r of mine) if (r[1] < 0 && fullYears.includes(r[0].slice(0, 4))) perMonth[Number(r[0].slice(5, 7)) - 1] -= r[1];
@@ -1556,6 +1679,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       const top = Math.max(...avgMonth);
       const reserve = avgMonth.reduce((a, v) => a + Math.max(0, v - mean), 0) / 12;
       const expensive = avgMonth.map((v, i) => [i, v]).filter(([, v]) => v > mean * 1.1).sort((a, b) => b[1] - a[1]);
+      if (expensive.length) seasonTile = { month: expensive[0][0], reserve: Math.ceil(reserve / 5) * 5 };
       seasonCard = card(
         tr("Teure Monate", "Expensive months"),
         tr(`Durchschnittliche Ausgaben je Monat aus ${fullYears.length === 1 ? `dem Jahr ${fullYears[0]}` : `${fullYears.length} vollen Jahren (${fullYears[0]}–${fullYears[fullYears.length - 1]})`}.`, `Average spending per month from ${fullYears.length === 1 ? fullYears[0] : `${fullYears.length} full years (${fullYears[0]}–${fullYears[fullYears.length - 1]})`}.`),
@@ -1600,6 +1724,7 @@ class HaushaltsbuchPanel extends HTMLElement {
 
     // 6. Personal price increase per category between the first and the latest full year.
     let inflationCard;
+    let inflationTile = null;
     if (fullYears.length >= 2) {
       const fy = fullYears[0];
       const ly = fullYears[fullYears.length - 1];
@@ -1617,6 +1742,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         .map(([c, v]) => ({ c, before: a.get(c) / 12, now: v / 12 }));
       const rate = (x, y) => new Intl.NumberFormat(this._numberLocale(), { maximumFractionDigits: 1 }).format(Math.round((Math.pow(y / x, 1 / span) - 1) * 1000) / 10);
       const pct = (x, y) => Math.round(((y - x) / x) * 100);
+      if (totalA && totalB) inflationTile = span > 1 ? tr(`${rate(totalA, totalB)} % pro Jahr`, `${rate(totalA, totalB)} % per year`) : `${pct(totalA, totalB) > 0 ? "+" : ""}${pct(totalA, totalB)} %`;
       inflationCard = card(
         tr("Dein persönlicher Preisanstieg", "Your personal price increase"),
         tr(`Ausgaben pro Monat ${fy} und ${ly}. Mehr kann auch heißen: mehr gekauft, nicht nur teurer.`, `Spending per month in ${fy} and ${ly}. More can also mean you bought more, not only higher prices.`),
@@ -1629,6 +1755,19 @@ class HaushaltsbuchPanel extends HTMLElement {
     } else {
       inflationCard = card(tr("Dein persönlicher Preisanstieg", "Your personal price increase"), "", empty(tr("Dafür braucht es mindestens zwei volle Kalenderjahre an Umsätzen.", "This needs at least two full calendar years of transactions.")));
     }
+
+    // Short versions for the "at a glance" tiles.
+    const missingSum = missing.reduce((a, x) => a + monthlyEquivalent(x.now), 0);
+    const worst = budgetRows.filter((x) => !x.pot && x.enough && x.planned).map((x) => ({ x, d: Math.round(((x.typical - x.planned) / x.planned) * 100) })).sort((a, b) => b.d - a.d)[0];
+    const topPrice = prices[0];
+    this._insightTiles = [
+      { icon: "mdi:magnify", color: 1, title: tr("Vergessene Abos", "Forgotten subscriptions"), value: missing.length ? tr(`${missing.length} · ${money(missingSum)}/Monat`, `${missing.length} · ${money(missingSum)}/month`) : tr("alles erfasst", "all covered") },
+      { icon: "mdi:cart-outline", color: 2, title: tr("Budgets", "Budgets"), value: worst ? (worst.d > 10 ? `${esc(worst.x.budget.name)} +${worst.d} %` : worst.d < -10 ? tr(`${esc(worst.x.budget.name)} ${worst.d} %`, `${esc(worst.x.budget.name)} ${worst.d} %`) : tr("passen", "fit")) : tr("zu wenig Daten", "not enough data") },
+      { icon: "mdi:trending-up", color: 3, title: tr("Preisentwicklung", "Price changes"), value: topPrice ? `${esc(topPrice.name)} ${topPrice.pct > 0 ? "+" : ""}${topPrice.pct} %` : tr("keine", "none") },
+      { icon: "mdi:calendar-alert", color: 4, title: tr("Teurer Monat", "Expensive month"), value: seasonTile ? tr(`${monthName(seasonTile.month)} · ${money(seasonTile.reserve)} zurücklegen`, `${monthName(seasonTile.month)} · put aside ${money(seasonTile.reserve)}`) : "—" },
+      { icon: "mdi:star-outline", color: 5, title: tr(`Rückblick ${reviewYear}`, `${reviewYear} review`), value: yearRows.length ? tr(`${money(income - spent)} übrig`, `${money(income - spent)} left`) : "—" },
+      { icon: "mdi:chart-line", color: 6, title: tr("Dein Preisanstieg", "Your price increase"), value: inflationTile || "—" },
+    ];
 
     return missingCard + budgetCard + priceCard + seasonCard + reviewCard + inflationCard;
   }
@@ -3427,6 +3566,45 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._statsTab = target.dataset.tab;
         this._render();
         break;
+      case "stats-period": {
+        const p = target.dataset.period;
+        const rows = this._ledger?.rows || [];
+        const latest = rows.length ? rows[rows.length - 1][0] : iso(new Date());
+        const curYear = this._statsYear && this._statsYear !== "all" ? this._statsYear : latest.slice(0, 4);
+        if (p === "all") {
+          this._statsYear = "all";
+          this._statsMonth = null;
+        } else if (p === "year") {
+          this._statsYear = this._statsMonth ? this._statsMonth.slice(0, 4) : curYear;
+          this._statsMonth = null;
+        } else if (!this._statsMonth) {
+          const inYear = rows.filter((r) => r[0].startsWith(curYear));
+          this._statsYear = curYear;
+          this._statsMonth = (inYear.length ? inYear[inYear.length - 1][0] : latest).slice(0, 7);
+        }
+        this._statsOpen = null;
+        this._statsPick = null;
+        this._render();
+        break;
+      }
+      case "stats-step": {
+        const to = target.dataset.to;
+        this._statsYear = to.slice(0, 4);
+        this._statsMonth = to.includes("-") ? to : null;
+        this._statsOpen = null;
+        this._statsPick = null;
+        this._render();
+        break;
+      }
+      case "insight-show-ignored":
+        this._showIgnored = !this._showIgnored;
+        this._render();
+        break;
+      case "insight-unignore": {
+        const st = this._state.user.settings || {};
+        this._saveSpecialSettings({ stats_ignored: (st.stats_ignored || []).filter((k) => k !== target.dataset.key) });
+        break;
+      }
       case "insight-ignore": {
         const st = this._state.user.settings || {};
         this._saveSpecialSettings({ stats_ignored: [...(st.stats_ignored || []), target.dataset.key] });
@@ -3650,8 +3828,8 @@ class HaushaltsbuchPanel extends HTMLElement {
 }
 
 const STYLES = `
-  :host { --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100; --viz-5: #e87ba4; --viz-other: #9e9d98; }
-  :host(.dark) { --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; --viz-5: #d55181; --viz-other: #6e6d68; }
+  :host { --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100; --viz-5: #e87ba4; --viz-6: #6250d6; --viz-other: #9e9d98; }
+  :host(.dark) { --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; --viz-5: #d55181; --viz-6: #9085e9; --viz-other: #6e6d68; }
   :host { display: block; min-height: 100vh; background: var(--primary-background-color); color: var(--primary-text-color); font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
   * { box-sizing: border-box; }
   .toolbar { display: flex; align-items: center; gap: 8px; height: var(--header-height, 56px); padding: 0 12px; background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); }
@@ -3935,6 +4113,97 @@ const STYLES = `
   .stats-bookings li { padding: 4px 0; border-top: 1px solid var(--divider-color); }
   .stats-bookings .csv-detail-head .what { margin-left: auto; color: var(--secondary-text-color); }
   button.link { background: none; border: none; padding: 4px 0; color: var(--primary-color); cursor: pointer; font: inherit; }
+  /* Statistics */
+  .st-top { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+  .st-pills { display: inline-flex; background: var(--secondary-background-color); border-radius: 999px; padding: 3px; }
+  .st-pills button { font: inherit; font-size: 13px; font-weight: 500; padding: 6px 14px; border: none; border-radius: 999px; background: none; color: var(--secondary-text-color); cursor: pointer; }
+  .st-pills button.on { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+  .st-nav { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 600; }
+  .st-arrow { width: 32px; height: 32px; border-radius: 50%; border: none; display: grid; place-items: center; background: var(--secondary-background-color); color: var(--primary-text-color); font-size: 18px; line-height: 1; cursor: pointer; padding: 0; }
+  .st-arrow:disabled { opacity: 0.35; cursor: default; }
+  .st-chip { border: 1px solid var(--divider-color); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; color: var(--primary-text-color); background: var(--card-background-color); width: auto; }
+  .st-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--divider-color); margin: 0 0 14px; }
+  .st-tabs button { font: inherit; font-weight: 500; background: none; border: none; color: var(--secondary-text-color); padding: 8px 0; cursor: pointer; }
+  .st-tabs button.on { color: var(--primary-text-color); box-shadow: inset 0 -2px var(--primary-color); }
+  .st-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); margin-bottom: 14px; }
+  @media (min-width: 900px) { .st-grid:not(.single) { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } .st-span { grid-column: span 2; } }
+  .st-grid .card { margin: 0; border-radius: 18px; padding: 18px; }
+  .st-grid.single .card { margin: 0; }
+  .st-label { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--secondary-text-color); font-weight: 600; }
+  .st-hero { display: flex; flex-direction: column; gap: 14px; }
+  .st-hero .hint { margin: 4px 0 0; }
+  .st-big-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .st-big { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+  .st-big.neg { color: var(--error-color, #db4437); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; background: var(--secondary-background-color); color: var(--secondary-text-color); white-space: nowrap; }
+  .badge.good { background: color-mix(in srgb, var(--success-color, #1a8f5a) 16%, transparent); color: var(--success-color, #1a8f5a); }
+  .badge.bad { background: color-mix(in srgb, var(--error-color, #d03b3b) 16%, transparent); color: var(--error-color, #d03b3b); }
+  .st-rate { display: flex; align-items: center; gap: 12px; }
+  .st-rate .hint { margin: 0; white-space: nowrap; }
+  .st-rate-bar { flex: 1; height: 8px; border-radius: 99px; background: var(--secondary-background-color); overflow: hidden; }
+  .st-rate-bar span { display: block; height: 100%; background: var(--success-color, #1baf7a); border-radius: 99px; }
+  .st-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .st-kpi { background: var(--secondary-background-color); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+  .st-kpi-v { font-size: 20px; font-weight: 650; }
+  .st-spark { width: 100%; height: 30px; }
+  .st-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .st-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  .st-head .hint { margin: 0; }
+  .st-legend { display: flex; gap: 14px; font-size: 12px; color: var(--secondary-text-color); }
+  .st-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--c); }
+  .st-chart { width: 100%; height: auto; display: block; overflow: visible; }
+  .st-grid-line { stroke: var(--divider-color); stroke-width: 1; }
+  .st-axis { font-size: 10px; fill: var(--secondary-text-color); }
+  .st-xl.on { fill: var(--primary-text-color); font-weight: 700; }
+  .st-col[data-action] { cursor: pointer; }
+  .st-col.dim .st-in, .st-col.dim .st-out { opacity: 0.35; }
+  .st-col-hl { fill: var(--secondary-background-color); }
+  .st-hit { fill: transparent; }
+  .st-col[data-action]:hover .st-in, .st-col[data-action]:hover .st-out { opacity: 1; filter: brightness(1.1); }
+  .st-in { fill: var(--success-color, #1baf7a); }
+  .st-out { fill: var(--error-color, #e34948); }
+  .st-sel { display: flex; gap: 4px 14px; flex-wrap: wrap; align-items: baseline; margin-top: 6px; background: var(--secondary-background-color); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+  .st-sel .pos { color: var(--success-color, #43a047); }
+  .st-sel .neg { color: var(--error-color, #db4437); }
+  .st-donut { display: flex; gap: 18px; align-items: flex-start; }
+  .st-donut > svg { flex: 0 0 132px; width: 132px; height: 132px; }
+  .st-ring-l { font-size: 9px; letter-spacing: 0.06em; fill: var(--secondary-text-color); font-weight: 600; }
+  .st-ring-v { font-size: 15px; font-weight: 700; fill: var(--primary-text-color); }
+  .st-cats { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .st-cat { border-top: 1px solid var(--divider-color); }
+  .st-cat:first-child { border-top: none; }
+  .st-cat-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 64px; gap: 10px; align-items: center; padding: 8px 0; width: 100%; background: none; border: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .st-cat.open .st-cat-n { color: var(--primary-color); }
+  .st-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+  .st-cat-n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st-cat-a { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .st-cat-d { text-align: right; }
+  .st-cat-d .badge { padding: 1px 6px; font-size: 11px; }
+  .st-cat .stats-detail { grid-template-columns: 1fr; gap: 8px; padding: 0 0 10px 20px; }
+  .st-cat .stats-bookings { padding: 0 0 12px 20px; }
+  @media (max-width: 600px) { .st-donut { flex-direction: column; align-items: stretch; } .st-donut > svg { align-self: center; width: 150px; height: 150px; flex: none; } .st-big { font-size: 34px; } }
+  .st-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .st-tile { background: var(--secondary-background-color); border: none; border-radius: 14px; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 104px; font: inherit; color: inherit; text-align: left; cursor: pointer; min-width: 0; }
+  .st-tile-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); }
+  .st-tile-t { font-size: 12px; color: var(--secondary-text-color); }
+  .st-tile-v { font-size: 15px; font-weight: 650; line-height: 1.25; overflow-wrap: break-word; hyphens: auto; }
+  .st-day { font-size: 12px; color: var(--secondary-text-color); font-weight: 600; padding: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .st-tx { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0; }
+  .st-av { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; background: var(--c); }
+  .st-tx-n { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-tx-m { font-size: 12px; color: var(--secondary-text-color); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .st-tx-p { font-size: 12px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-tx-a { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .st-tx-a.pos { color: var(--success-color, #43a047); }
+  .st-grid .insight h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+  .insight-hidden { border-top: 1px solid var(--divider-color); padding-top: 6px; margin-top: 4px; }
+  .insight-hidden ul, .insight-hits ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .insight-hidden li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--divider-color); font-size: 13px; }
+  .insight-hits { margin-top: 6px; font-size: 12px; color: var(--secondary-text-color); }
+  .insight-hits summary { cursor: pointer; color: var(--primary-color); }
+  .insight-hits li { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 8px; padding: 3px 0; border-top: 1px solid var(--divider-color); }
+  .insight-hits li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .insight-hits li b { font-weight: 500; color: var(--primary-text-color); }
   @media (max-width: 600px) {
     .stats-cat-side { width: auto; max-width: 40%; }
     .stats-detail { grid-template-columns: 1fr; }
