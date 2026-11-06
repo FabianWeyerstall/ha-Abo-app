@@ -478,8 +478,14 @@ function analyzeBank(bookings, items, history, entries) {
   for (const c of byCategory.values()) {
     const budget = keyOwner.get(`c:${c.name}`) || budgetItems.find((i) => i.category === c.category || i.name.toLowerCase() === c.name.toLowerCase());
     if (budget) {
-      const known = new Set((history[budget.id]?.spendings || []).map(([d, a]) => `${d}|${a}`));
-      const fresh = c.list.filter((b) => b.date >= budget.start_date && !known.has(`${b.date}|${Math.abs(b.amount)}`));
+      // Entered by hand already? Same amount within two days counts as the same purchase.
+      const known = (history[budget.id]?.spendings || []).map(([date, amount]) => ({ date, amount, taken: false }));
+      const fresh = c.list.filter((b) => {
+        if (b.date < budget.start_date) return false;
+        const twin = known.find((k) => !k.taken && Math.abs(k.amount - Math.abs(b.amount)) < 0.005 && Math.abs(daysBetween(k.date, b.date)) <= 2);
+        if (twin) twin.taken = true;
+        return !twin;
+      });
       if (fresh.length) {
         budgetMatches.push({
           key: `s:${budget.id}`,
