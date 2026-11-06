@@ -349,7 +349,7 @@ const wordsOf = (text) => String(text || "").toLowerCase().replace(LEGAL_FORMS, 
  * counts most, but only with a similar amount; without a name the amount must
  * be (almost) exact and day or category must agree.
  */
-function similarity(item, name, purpose, category, amount, day) {
+function similarity(item, name, purpose, category, amount, day, amounts = [amount]) {
   const expected = Number(item.current_amount ?? item.amount) || 0;
   if (!expected || !amount) return 0;
   const diff = Math.abs(expected - amount) / Math.max(expected, amount);
@@ -364,6 +364,10 @@ function similarity(item, name, purpose, category, amount, day) {
   const sameCategory = item.category === category;
   if (hit(name) && diff <= 0.35) return 4 - diff;
   if (hit(purpose) && diff <= 0.15) return 3.5 - diff;
+  // Without the name, one equal amount is chance: most bookings of the payee must fit.
+  const fitting = amounts.filter((a) => Math.abs(expected - a) / Math.max(expected, a) <= 0.15).length;
+  if (fitting < Math.max(1, amounts.length * 0.75)) return 0;
+  if (amounts.length < 2 && !(sameDay && sameCategory && diff <= 0.01)) return 0;
   if (diff <= 0.01 && (sameDay || sameCategory)) return 3 - diff;
   if (sameCategory && sameDay && diff <= 0.15) return 2 - diff;
   if (sameCategory && diff <= 0.05) return 1.5 - diff;
@@ -371,12 +375,12 @@ function similarity(item, name, purpose, category, amount, day) {
 }
 
 /** The existing item that fits best, or undefined. */
-function bestItem(items, direction, name, purpose, category, amount, day) {
+function bestItem(items, direction, name, purpose, category, amount, day, amounts) {
   let best;
   let bestScore = 0;
   for (const item of items) {
     if (item.direction !== direction) continue;
-    const score = similarity(item, name, purpose, category, amount, day);
+    const score = similarity(item, name, purpose, category, amount, day, amounts);
     if (score > bestScore) [best, bestScore] = [item, score];
   }
   return best;
@@ -454,7 +458,7 @@ function analyzeBank(bookings, items, history, entries) {
     let item = keyOwner.get(group.key);
     if (item?.schedule?.frequency === "budget") continue; // handled with the budgets below
     let remembered = Boolean(item);
-    if (!item && !card) item = bestItem(recurringItems, last.direction, last.name, last.purpose, category, amount, day);
+    if (!item && !card) item = bestItem(recurringItems, last.direction, last.name, last.purpose, category, amount, day, list.map((b) => Math.abs(b.amount)));
     if (item) {
       // Known payee: never suggested again, even when there is nothing to confirm
       // (e.g. the item was entered after these bookings).
@@ -479,7 +483,7 @@ function analyzeBank(bookings, items, history, entries) {
     }
     if (suggestion) {
       list.forEach((b) => used.add(b));
-      const twin = bestItem(recurringItems, suggestion.direction, suggestion.name, last.purpose, category, amount, day);
+      const twin = bestItem(recurringItems, suggestion.direction, suggestion.name, last.purpose, category, amount, day, list.map((b) => Math.abs(b.amount)));
       suggestions.push({ ...suggestion, existing: twin ? twin.name : null, checked: !twin, target: "new" });
       continue;
     }
