@@ -156,6 +156,266 @@ const today = () => {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 };
 
+// ------------------------------------------------------------- bank CSV import
+// The CSV is read in the browser only. Nothing but the ticked suggestions is
+// sent to Home Assistant, as a normal import of new entries.
+
+const CSV_COLUMNS = {
+  date: ["datum", "buchungstag", "buchungsdatum", "date"],
+  amount: ["betrag", "betrag (eur)", "betrag in eur", "umsatz", "amount"],
+  name: ["name", "empfänger", "zahlungsempfänger", "auftraggeber/empfänger", "beguenstigter/zahlungspflichtiger", "name zahlungsbeteiligter", "payee"],
+  purpose: ["zweck", "verwendungszweck", "purpose", "description"],
+  category: ["kategorie", "category"],
+  text: ["buchungstext", "art der zahlung", "umsatzart"],
+  mandate: ["mandatsreferenz", "mandate reference"],
+  creditor: ["gläubiger id", "glaeubiger id", "gläubiger-id", "creditor id"],
+};
+
+/** Split CSV text into rows of fields; handles quotes and ; , or tab. */
+function splitCsv(text) {
+  const firstLines = text.split(/\r?\n/).slice(0, 5).join("\n");
+  const delimiter = [";", "\t", ","].sort((a, b) => firstLines.split(b).length - firstLines.split(a).length)[0];
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === delimiter) { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseCsvDate(value) {
+  const s = String(value || "").trim();
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+  if (m) {
+    const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return iso(new Date(year, Number(m[2]) - 1, Number(m[1])));
+  }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+/** Bookings from a bank CSV: [{date, amount, name, purpose, category, text, mandate, creditor}]. */
+function parseBankCsv(text) {
+  const rows = splitCsv(text.replace(/^﻿/, ""));
+  const headerIndex = rows.findIndex((r) => {
+    const cells = r.map((c) => c.trim().toLowerCase());
+    return CSV_COLUMNS.date.some((n) => cells.includes(n)) && CSV_COLUMNS.amount.some((n) => cells.includes(n));
+  });
+  if (headerIndex < 0) throw new Error(tr("In der Datei fehlen die Spalten Datum und Betrag.", "The file has no date and amount columns."));
+  const header = rows[headerIndex].map((c) => c.trim().toLowerCase());
+  const col = Object.fromEntries(Object.entries(CSV_COLUMNS).map(([key, names]) => [key, names.map((n) => header.indexOf(n)).find((i) => i >= 0) ?? -1]));
+  const bookings = [];
+  for (const r of rows.slice(headerIndex + 1)) {
+    const get = (key) => (col[key] >= 0 ? String(r[col[key]] ?? "").trim() : "");
+    const date = parseCsvDate(get("date"));
+    const amount = parseAmount(get("amount").replace(/[€]|EUR/g, ""), ",");
+    if (!date || !Number.isFinite(amount) || amount === 0) continue;
+    bookings.push({ date, amount, name: get("name") || get("purpose").slice(0, 40), purpose: get("purpose"), category: get("category"), text: get("text"), mandate: get("mandate"), creditor: get("creditor") });
+  }
+  if (!bookings.length) throw new Error(tr("In der Datei wurden keine Umsätze gefunden.", "No transactions were found in the file."));
+  return bookings;
+}
+
+const LEGAL_FORMS = /\b(gmbh( & co\.? kg)?|ag|se|kg|e\.?\s?v\.?|aktiengesellschaft|deutschland|europe|sales|mbh)\b\.?/gi;
+const nameKey = (name) => name.toLowerCase().replace(LEGAL_FORMS, "").replace(/[^a-zäöüß ]/g, " ").split(/\s+/).filter((w) => w.length > 2).slice(0, 2).join(" ");
+const tidyName = (name) => {
+  const clean = name.replace(LEGAL_FORMS, "").replace(/[\/,]+$/, "").replace(/\s{2,}/g, " ").trim() || name.trim();
+  return clean === clean.toUpperCase() ? clean.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase()) : clean;
+};
+
+// Bank category or text → [category, icon] of the Haushaltsbuch.
+const CSV_CATEGORY_RULES = [
+  [/gehalt|lohn|bezüge|salary/, "Gehalt", "mdi:briefcase"],
+  [/rundfunk|beitragsservice/, "Rundfunk", "mdi:radio-tower"],
+  [/einspeis|photovoltaik|pv-anlage|solar/, "Photovoltaik", "mdi:solar-power-variant"],
+  [/strom|energie|stadtwerke/, "Strom", "mdi:flash"],
+  [/wasser/, "Wasser", "mdi:water"],
+  [/handy|mobilfunk/, "Internet & Telefon", "mdi:cellphone"],
+  [/internet|telefon|festnetz/, "Internet & Telefon", "mdi:router-wireless"],
+  [/kfz|auto/, "Auto", "mdi:car"],
+  [/versicherung/, "Versicherungen", "mdi:shield-check"],
+  [/miete|wohnen|nebenkosten/, "Wohnen", "mdi:home"],
+  [/kredit|darlehen|finanzierung/, "Kredite", "mdi:bank"],
+  [/sparen|sparplan|bauspar|depot/, "Sparen", "mdi:piggy-bank"],
+  [/steuer|finanzamt/, "Steuern", "mdi:bank"],
+  [/streaming|tv|musik/, "TV & Streaming", "mdi:television"],
+  [/verein|mitglied/, "Vereine", "mdi:account-group"],
+  [/kinder|kita|kindergarten/, "Kinder", "mdi:human-male-child"],
+  [/gesundheit|apotheke|arzt|fitness/, "Gesundheit & Pflege", "mdi:heart-pulse"],
+  [/lebensmittel|supermarkt/, "Lebensmittel", "mdi:cart"],
+  [/tanken|tankstelle/, "Auto", "mdi:gas-station"],
+];
+function csvCategory(booking) {
+  // Payee and purpose first, the bank's category ("Handy & Internet") only as fallback.
+  for (const haystack of [`${booking.name} ${booking.purpose}`, booking.category].map((t) => t.toLowerCase())) {
+    for (const [re, category, icon] of CSV_CATEGORY_RULES) if (re.test(haystack)) return { category, icon };
+  }
+  return { category: booking.category || tr("Sonstiges", "Other"), icon: "mdi:repeat" };
+}
+
+const CSV_RHYTHMS = [
+  { min: 6, max: 8, frequency: "weekly", interval: 1, minCount: 4 },
+  { min: 13, max: 16, frequency: "weekly", interval: 2, minCount: 3 },
+  { min: 26, max: 35, frequency: "monthly", interval: 1, minCount: 3 },
+  { min: 55, max: 66, frequency: "monthly", interval: 2, minCount: 3 },
+  { min: 84, max: 98, frequency: "monthly", interval: 3, minCount: 2 },
+  { min: 170, max: 195, frequency: "monthly", interval: 6, minCount: 2 },
+  { min: 350, max: 380, frequency: "yearly", interval: 1, minCount: 2 },
+];
+const daysBetween = (a, b) => Math.round((parseIso(b) - parseIso(a)) / 86400000);
+const median = (values) => {
+  const s = [...values].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+/** Week of the month (1-4, or -1 for the last) if all dates share weekday and week. */
+function commonWeekday(dates) {
+  const days = dates.map(parseIso);
+  const weekday = (days[0].getDay() + 6) % 7;
+  if (!days.every((d) => (d.getDay() + 6) % 7 === weekday)) return null;
+  const isLast = (d) => d.getDate() + 7 > new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  if (days.every(isLast)) return { weekday, week: -1 };
+  const week = Math.ceil(days[0].getDate() / 7);
+  return week <= 4 && days.every((d) => Math.ceil(d.getDate() / 7) === week) ? { weekday, week } : null;
+}
+
+function nthWeekday(year, month, weekday, week) {
+  if (week === -1) {
+    const d = new Date(year, month + 1, 0);
+    while ((d.getDay() + 6) % 7 !== weekday) d.setDate(d.getDate() - 1);
+    return d;
+  }
+  const d = new Date(year, month, 1);
+  while ((d.getDay() + 6) % 7 !== weekday) d.setDate(d.getDate() + 1);
+  d.setDate(d.getDate() + 7 * (week - 1));
+  return d;
+}
+
+function nextDue(dateIso, rhythm) {
+  const d = parseIso(dateIso);
+  if (rhythm.frequency === "weekly") return iso(addDays(d, 7 * rhythm.interval));
+  if (rhythm.weekday !== undefined) return iso(nthWeekday(d.getFullYear(), d.getMonth() + 1, rhythm.weekday, rhythm.week));
+  const months = rhythm.frequency === "yearly" ? 12 : rhythm.interval;
+  const target = new Date(d.getFullYear(), d.getMonth() + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return iso(new Date(target.getFullYear(), target.getMonth(), Math.min(d.getDate(), lastDay)));
+}
+
+/**
+ * Find recurring bookings. Direct debits are grouped by creditor ID and
+ * mandate, everything else by payee name and direction.
+ * Returns {suggestions, budgets, from, to, count}.
+ */
+function detectRecurring(bookings, existingItems) {
+  const from = bookings.reduce((m, b) => (b.date < m ? b.date : m), bookings[0].date);
+  const to = bookings.reduce((m, b) => (b.date > m ? b.date : m), bookings[0].date);
+  const groups = new Map();
+  for (const b of bookings) {
+    const direction = b.amount < 0 ? "expense" : "income";
+    const key = b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${direction}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ ...b, direction });
+  }
+  const used = new Set();
+  const suggestions = [];
+  for (const [key, list] of groups) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    const gaps = list.slice(1).map((b, i) => daysBetween(list[i].date, b.date)).filter((g) => g > 3);
+    if (!gaps.length) continue;
+    const gap = median(gaps);
+    let rhythm = CSV_RHYTHMS.find((r) => gap >= r.min && gap <= r.max);
+    if (!rhythm || list.length < rhythm.minCount) continue;
+    // e.g. salary on the last Thursday: the day of the month moves, the weekday stays.
+    const sameDay = list.every((b) => b.date.slice(8) === list[0].date.slice(8));
+    const weekdayRule = rhythm.frequency === "monthly" && rhythm.interval === 1 && !sameDay ? commonWeekday(list.map((b) => b.date)) : null;
+    if (weekdayRule) rhythm = { ...rhythm, ...weekdayRule };
+    if (gaps.filter((g) => Math.abs(g - gap) > gap * 0.25).length > gaps.length / 4) continue;
+    const last = list[list.length - 1];
+    // A booking that stopped well before the end of the file is probably cancelled.
+    if (daysBetween(last.date, to) > gap * 1.6) continue;
+    const amounts = list.slice(-6).map((b) => Math.abs(b.amount));
+    const amount = Math.abs(last.amount);
+    const spread = Math.max(...amounts.map((a) => Math.abs(a - amount))) / amount;
+    const variance = spread < 0.005 ? 0 : Math.min(100, Math.ceil((spread * 100) / 5) * 5);
+    const { category, icon } = csvCategory(last);
+    const name = category === "Gehalt" ? tr("Gehalt", "Salary") : tidyName(last.name);
+    const twin = existingItems.find((i) => {
+      if (i.direction !== last.direction || i.schedule?.frequency === "budget") return false;
+      const words = nameKey(i.name).split(" ").filter(Boolean);
+      const sameName = words.some((w) => nameKey(name).includes(w));
+      const sameAmount = i.category === category && Math.abs((i.current_amount ?? i.amount) - amount) <= amount * 0.1;
+      return sameName || sameAmount;
+    });
+    list.forEach((b) => used.add(b));
+    // Booked on Monday after a weekend: the nominal date is the usual day of the month.
+    let due = last.date;
+    if (rhythm.frequency !== "weekly" && !weekdayRule) {
+      const counts = {};
+      for (const b of list) counts[b.date.slice(8)] = (counts[b.date.slice(8)] || 0) + 1;
+      const day = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]);
+      const d = parseIso(last.date);
+      const candidate = new Date(d.getFullYear(), d.getMonth(), Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+      if (Math.abs(daysBetween(iso(candidate), last.date)) <= 4) due = iso(candidate);
+    }
+    suggestions.push({
+      key,
+      name,
+      direction: last.direction,
+      amount,
+      variance,
+      category,
+      icon,
+      count: list.length,
+      first: list[0].date,
+      last: last.date,
+      due,
+      next: nextDue(due, rhythm),
+      debit: Boolean(last.mandate || /lastschrift/i.test(last.text)),
+      schedule: { frequency: rhythm.frequency, interval: rhythm.interval, unit: "months", ...(weekdayRule || {}) },
+      certainty: variance > 20 ? "unsicher" : variance > 0 ? "wahrscheinlich" : "sicher",
+      existing: twin ? twin.name : null,
+      checked: !twin,
+    });
+  }
+  suggestions.sort((a, b) => (a.direction === b.direction ? b.amount / (b.schedule.interval || 1) - a.amount / (a.schedule.interval || 1) : a.direction === "income" ? -1 : 1));
+
+  // Frequent irregular spending (e.g. groceries by card) → monthly budget idea.
+  const months = Math.max(1, daysBetween(from, to) / 30.4);
+  const byCategory = new Map();
+  for (const b of bookings) {
+    if (used.has(b) || b.amount > 0) continue;
+    const { category, icon } = csvCategory(b);
+    const name = b.category || category;
+    if (!byCategory.has(name)) byCategory.set(name, { name, category, icon, total: 0, count: 0 });
+    const entry = byCategory.get(name);
+    entry.total += -b.amount;
+    entry.count += 1;
+  }
+  const budgets = [...byCategory.values()]
+    .filter((c) => c.count >= months * 2 && c.category !== tr("Sonstiges", "Other"))
+    .map((c) => {
+      const amount = Math.ceil(c.total / months / 10) * 10;
+      const twin = existingItems.find((i) => i.schedule?.frequency === "budget" && i.category === c.category);
+      return { key: `b:${c.name}`, name: c.name, category: c.category, icon: c.icon, amount, count: c.count, existing: twin ? twin.name : null, checked: false };
+    })
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 3);
+  return { suggestions, budgets, from, to, count: bookings.length };
+}
+
 function presetOf(schedule) {
   const { frequency, interval } = schedule || {};
   if (frequency === "monthly" && schedule.weekday !== undefined && schedule.weekday !== null) return "monthly_weekday";
@@ -925,10 +1185,11 @@ class HaushaltsbuchPanel extends HTMLElement {
         <div><div class="label">${tr("Ausgaben pro Jahr", "Expenses per year")}</div><div class="big">${this._money(monthlyOut * 12)}</div></div>
       </div>
       <p class="hint">${tr("Wiederkehrende Posten auf einen Monat umgerechnet, einmalige Posten zählen hier nicht mit.", "Recurring entries converted to one month; one-off entries are not included here.")}</p>
+      ${this._isHousehold() ? "" : `<p class="hint">${tr("Importieren nimmt eine Export-Datei des Haushaltsbuchs oder eine CSV mit Umsätzen aus deiner Banking-App. Aus der CSV schlägt das Haushaltsbuch wiederkehrende Abbuchungen vor.", "Import takes a Household Budget export file or a CSV of transactions from your banking app. From a CSV, recurring payments are suggested.")}</p>`}
       ${this._isHousehold() ? "" : `<div class="row-actions">
         <button class="secondary small" data-action="export">${tr("Exportieren", "Export")}</button>
         <button class="secondary small" data-action="import">${tr("Importieren", "Import")}</button>
-        <input type="file" accept=".json,application/json" data-change="import-file" hidden>
+        <input type="file" accept=".json,.csv,application/json,text/csv" data-change="import-file" hidden>
       </div>`}
       ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="${tr("Posten suchen …", "Search entries …")}" aria-label="${tr("Posten suchen", "Search entries")}" value="${esc(this._search || "")}">` : ""}
     </div>
@@ -1405,6 +1666,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (d.type === "confirm") body = this._renderConfirmForm(d);
     if (d.type === "household") body = this._renderHouseholdForm(d);
     if (d.type === "import") body = this._renderImportForm(d);
+    if (d.type === "csv") body = this._renderCsvForm(d);
     if (d.type === "notice") body = this._renderNotice(d);
     if (d.type === "spending") body = this._renderSpendingForm(d);
     return `<div class="overlay" data-action="close-overlay"><div class="dialog" role="dialog" aria-modal="true">${body}</div></div>`;
@@ -1561,6 +1823,66 @@ class HaushaltsbuchPanel extends HTMLElement {
     </form>`;
   }
 
+  _renderCsvForm(d) {
+    const row = (s, budget = false) => `<label class="csv-row ${s.existing ? "is-existing" : ""}">
+        <input type="checkbox" data-change="csv-check" data-key="${esc(s.key)}" ${s.checked ? "checked" : ""}>
+        <div class="entry-icon">${this._icon(s.icon)}</div>
+        <div class="entry-main">
+          <input class="csv-name" type="text" data-change="csv-name" data-key="${esc(s.key)}" value="${esc(s.name)}" aria-label="${tr("Name", "Name")}">
+          <div class="entry-meta">${budget
+            ? tr(`Budget pro Monat · ${s.count} Kartenzahlungen o.ä.`, `monthly budget · ${s.count} card payments etc.`)
+            : `${esc(scheduleLabel(s))} · ${tr("nächste am", "next on")} ${shortDate(s.next)} · ${s.count}× ${s.debit ? tr("Lastschrift", "direct debit") : tr("gebucht", "booked")}${s.variance ? tr(` · schwankt bis ${s.variance} %`, ` · varies up to ${s.variance} %`) : ""}`}
+            ${budget ? "" : this._chip(s.certainty)}
+            ${s.existing ? `<span class="chip skipped">${tr(`schon da als „${esc(s.existing)}“`, `exists as “${esc(s.existing)}”`)}</span>` : ""}</div>
+        </div>
+        <div class="entry-amount ${budget || s.direction === "expense" ? "neg" : "pos"}">${this._money(budget || s.direction === "expense" ? -s.amount : s.amount, true)}</div>
+      </label>`;
+    const picked = this._csvPicked(d).length;
+    return `<form data-form="csv">
+      <h2>${tr("Wiederkehrende Buchungen gefunden", "Recurring payments found")}</h2>
+      <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}. Darin stecken <b>${d.suggestions.length} regelmäßige Buchungen</b>.`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}, with <b>${d.suggestions.length} regular payments</b>.`)}</p>
+      ${d.suggestions.length ? `<div class="csv-list">${d.suggestions.map((s) => row(s)).join("")}</div>` : `<p class="hint">${tr("Keine regelmäßigen Buchungen erkannt. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "No regular payments detected. For good suggestions the file should cover at least 6 to 12 months.")}</p>`}
+      ${d.budgets.length ? `<h3 class="csv-sub">${tr("Als Budget anlegen?", "Create as a budget?")}</h3>
+      <p class="hint">${tr("Viele unregelmäßige Ausgaben derselben Kategorie, als Durchschnitt pro Monat.", "Many irregular expenses of the same category, as an average per month.")}</p>
+      <div class="csv-list">${d.budgets.map((b) => row(b, true)).join("")}</div>` : ""}
+      <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert werden nur die angehakten Posten, jeweils ab der letzten Buchung, die als bestätigt übernommen wird. Turnus, Kategorie und Symbol kannst du danach im Posten ändern.", "The file is only read here in the browser. Only the ticked entries are saved, each starting from its last booking, which is taken over as confirmed. You can change interval, category and icon in the entry afterwards.")}</p>
+      <div class="dialog-actions"><span></span><div>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit" class="csv-submit" ${picked ? "" : "disabled"}>${this._csvSubmitLabel(picked)}</button>
+      </div></div>
+    </form>`;
+  }
+
+  _csvPicked(d) {
+    return [...d.suggestions, ...d.budgets].filter((s) => s.checked);
+  }
+
+  _csvSubmitLabel(n) {
+    return n === 1 ? tr("1 Posten übernehmen", "Add 1 entry") : tr(`${n} Posten übernehmen`, `Add ${n} entries`);
+  }
+
+  _csvItems(d) {
+    const monthStart = iso(new Date(today().getFullYear(), today().getMonth(), 1));
+    const note = tr(`Aus Bank-CSV übernommen (${d.fileName})`, `Taken from bank CSV (${d.fileName})`);
+    return this._csvPicked(d).map((s) =>
+      s.key.startsWith("b:")
+        ? { name: s.name, direction: "expense", amount: s.amount, category: s.category, icon: s.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note }
+        : {
+            name: s.name,
+            direction: s.direction,
+            amount: s.amount,
+            amount_variance_pct: s.variance,
+            category: s.category,
+            icon: s.icon,
+            start_date: s.due,
+            schedule: s.schedule,
+            weekend_shift: s.category === "Gehalt" ? "previous" : null,
+            note,
+            confirmations: [{ due_date: s.due, status: "booked", actual_date: s.last, actual_amount: s.amount }],
+          }
+    );
+  }
+
   _renderNotice(d) {
     return `<div>
       <h2>${esc(d.title)}</h2>
@@ -1602,7 +1924,15 @@ class HaushaltsbuchPanel extends HTMLElement {
     input.value = "";
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
+      const text = await file.text();
+      if (/\.csv$/i.test(file.name) || !text.trim().startsWith("{")) {
+        const own = this._state.items.filter((i) => i.owner === this._state.user.id);
+        this._error = null;
+        this._dialog = { type: "csv", fileName: file.name, ...detectRecurring(parseBankCsv(text), own) };
+        this._render();
+        return;
+      }
+      const data = JSON.parse(text);
       if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error(tr("Das ist keine Export-Datei des Haushaltsbuchs.", "This is not a Household Budget export file."));
       this._error = null;
       this._dialog = { type: "import", data, fileName: file.name };
@@ -1765,6 +2095,19 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._run(() =>
         this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: this._parsedAmount(f.get("actual_amount"), null) })
       );
+    } else if (kind === "csv") {
+      const items = this._csvItems(this._dialog);
+      this._run(async () => {
+        const r = await this._ws("import", { data: { format: "haushaltsbuch", items }, replace: false });
+        setTimeout(() => {
+          this._dialog = {
+            type: "notice",
+            title: tr("Übernommen", "Added"),
+            text: tr(`${r.added} Posten angelegt${r.skipped ? `, ${r.skipped} gab es schon` : ""}. Du findest sie unter „Posten“.`, `${r.added} entries added${r.skipped ? `, ${r.skipped} already existed` : ""}. You find them under “Entries”.`),
+          };
+          this._render();
+        });
+      });
     } else if (kind === "import") {
       const replace = new FormData(form).get("mode") === "replace";
       if (replace && !confirm(tr("Alle deine eigenen Posten werden durch den Import ersetzt. Fortfahren?", "All your own entries will be replaced by the import. Continue?"))) return;
@@ -1835,6 +2178,15 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._saveSpecialSettings({ special_min_amount: Number(el.value) || 0 });
     } else if (kind === "import-file") {
       this._readImportFile(el);
+    } else if (kind === "csv-check" || kind === "csv-name") {
+      const d = this._dialog;
+      const s = [...d.suggestions, ...d.budgets].find((x) => x.key === el.dataset.key);
+      if (kind === "csv-check") s.checked = el.checked;
+      else s.name = el.value.trim() || s.name;
+      const button = this.shadowRoot.querySelector(".csv-submit");
+      const n = this._csvPicked(d).length;
+      button.textContent = this._csvSubmitLabel(n);
+      button.disabled = !n;
     } else if (kind === "entities") {
       this._run(() => this._ws("household/update", { household_id: el.dataset.id, entities: el.checked }));
     }
@@ -2299,6 +2651,16 @@ const STYLES = `
   input, select, textarea { font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); background: var(--input-fill-color, var(--secondary-background-color)); color: var(--primary-text-color); width: 100%; }
   input[type=checkbox], input[type=radio] { width: auto; flex-shrink: 0; }
   label.check.option { align-items: flex-start; }
+  .csv-list { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 12px; }
+  .csv-row { display: flex; flex-direction: row; text-align: left; align-items: center; gap: 10px; padding: 8px 4px; border-radius: 8px; cursor: pointer; }
+  .csv-row:hover { background: var(--secondary-background-color); }
+  .csv-row > input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; margin: 0; }
+  .csv-row .entry-main { flex: 1; min-width: 0; }
+  .csv-row .entry-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+  .csv-row.is-existing .entry-main, .csv-row.is-existing .entry-amount { opacity: 0.6; }
+  input.csv-name { border: 1px solid transparent; background: transparent; padding: 2px 4px; margin-left: -5px; font: inherit; font-weight: 500; color: var(--primary-text-color); width: 100%; border-radius: 6px; box-sizing: border-box; }
+  input.csv-name:hover, input.csv-name:focus { border-color: var(--divider-color); background: var(--card-background-color); }
+  .csv-sub { margin: 16px 0 0; }
   label.check.muted { color: var(--secondary-text-color); }
   label.check small { display: block; font-size: 12px; color: var(--secondary-text-color); }
   label.check.option input { margin-top: 3px; }
