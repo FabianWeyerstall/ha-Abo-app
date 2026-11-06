@@ -245,7 +245,8 @@ function dropOwnTransfers(bookings) {
   const drop = new Set(bookings.filter((b) => b.counter && accounts.has(b.counter) && b.counter !== b.account));
   const incoming = bookings.filter((b) => b.amount > 0 && !drop.has(b));
   for (const out of bookings.filter((b) => b.amount < 0 && !drop.has(b) && !b.counter)) {
-    const twin = incoming.find((b) => !drop.has(b) && b.account !== out.account && Math.abs(b.amount + out.amount) < 0.005 && Math.abs(daysBetween(out.date, b.date)) <= 3);
+    const days = isCardSettlement(out.name, out.purpose) ? 10 : 3;
+    const twin = incoming.find((b) => !drop.has(b) && b.account !== out.account && Math.abs(b.amount + out.amount) < 0.005 && Math.abs(daysBetween(out.date, b.date)) <= days);
     if (twin) drop.add(out).add(twin);
   }
   return { bookings: bookings.filter((b) => !drop.has(b)), transfers: drop.size };
@@ -337,6 +338,9 @@ function nextDue(dateIso, rhythm) {
 }
 
 const CARD_PAYMENT = /karte|kartenzahlung|debitkarte|visa|girocard|pos\b/i;
+/** A credit card bill paid from the current account: the real purchases are on the card. */
+const CARD_SETTLEMENT = /american express|\bamex\b|kreditkarten?[- ]?(abrechnung|ausgleich|saldo|rechnung)|(visa|mastercard)[- ]?(card )?(abrechnung|ausgleich)|kartenabrechnung/i;
+const isCardSettlement = (name, purpose) => CARD_SETTLEMENT.test(`${name || ""} ${purpose || ""}`);
 const RARE_WORDS = /versicherung|steuer|beitrag|verein|mitglied|jahres|wartung|tüv|gebühr|abo\b|lizenz/i;
 
 // Words that say what kind of contract it is, not with whom: "Lebensversicherung"
@@ -1232,8 +1236,44 @@ class HaushaltsbuchPanel extends HTMLElement {
 
 // ------------------------------------------------------------ statistics
 
+  /**
+   * The saved transactions as the statistics use them: credit card bills that
+   * reached an imported card account are transfers and drop out; the others get
+   * their own category instead of e.g. "bank fees". `index` maps each row to
+   * its position in the saved ledger.
+   */
+  _cleanLedger() {
+    const raw = this._ledger?.rows || [];
+    if (this._ledgerClean?.raw === raw) return this._ledgerClean;
+    const accounts = new Set(raw.map((r) => r[5]).filter(Boolean));
+    const bills = raw.filter((r) => r[1] < 0 && isCardSettlement(r[2], r[6]));
+    const drop = new Set();
+    if (accounts.size > 1) {
+      for (const out of bills) {
+        const twin = raw.find((b) => b[1] > 0 && !drop.has(b) && b[5] !== out[5] && Math.abs(b[1] + out[1]) < 0.005 && Math.abs(daysBetween(out[0], b[0])) <= 10);
+        if (twin) drop.add(out).add(twin);
+      }
+    }
+    const billSet = new Set(bills);
+    const index = new Map();
+    const rows = [];
+    raw.forEach((r, i) => {
+      if (drop.has(r)) return;
+      let row = r;
+      if (billSet.has(r)) {
+        row = [r[0], r[1], r[2], tr("Kreditkarte", "Credit card"), tr("Kreditkarten-Abrechnung", "Card statement"), r[5], r[6]];
+        row.cardBill = true;
+      }
+      index.set(row, i);
+      rows.push(row);
+    });
+    this._ledgerClean = { raw, rows, index, transfers: drop.size / 2, bills: bills.length - drop.size / 2 };
+    return this._ledgerClean;
+  }
+
   _renderStats() {
-    const rows = this._ledger?.rows || [];
+    const clean = this._cleanLedger();
+    const rows = clean.rows;
     if (!rows.length) {
       return `<div class="card empty">${tr("Noch keine Umsätze gespeichert. Importiere unter „Posten“ → „Importieren“ eine oder mehrere CSV-Dateien aus deiner Banking-App und lass „Umsätze für die Statistik speichern“ angehakt.", "No transactions saved yet. Import one or more CSV files from your banking app under “Entries” → “Import” and keep “Save transactions for statistics” ticked.")}</div>`;
     }
@@ -1270,7 +1310,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const insights = this._statsTab === "insights";
 
     // Where a transaction went: budget spending or confirmed booking of an entry.
-    const indexOf = new Map(rows.map((r, i) => [r, i]));
+    const indexOf = clean.index;
     const itemNames = Object.fromEntries(this._state.items.map((i) => [i.id, i.name]));
     const assignedTo = new Map();
     for (const [id, h] of Object.entries(this._bankHistory || {})) {
@@ -1305,7 +1345,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         <button class="${insights ? "on" : ""}" data-action="stats-tab" data-tab="insights">${tr("Auswertungen", "Insights")}</button>
       </div>`;
 
-    const manage = `<div class="card st-card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar. Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you. Transfers between your accounts are not counted.`)}</p>
+    const manage = `<div class="card st-card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar. Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you. Transfers between your accounts are not counted.`)}${clean.bills ? tr(` ${clean.bills === 1 ? "1 Kreditkarten-Abrechnung steht" : `${clean.bills} Kreditkarten-Abrechnungen stehen`} unter „Kreditkarte“. Importierst du auch die CSV der Kreditkarte, fallen sie als Umbuchung raus und du siehst die einzelnen Käufe.`, ` ${clean.bills} credit card bills are listed under “Credit card”. Import the card's CSV as well and they drop out as transfers, showing the single purchases instead.`) : ""}</p>
       <button class="secondary small" data-action="stats-clear">${tr("Alle löschen", "Delete all")}</button></div></div>`;
     const insightCards = this._renderInsights(mine, lastDate, year, all);
     if (insights) return top + `<div class="st-grid single">${insightCards}</div>` + manage;
@@ -1528,6 +1568,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     // Payees with their bookings, as the CSV import keys them without mandate.
     const groups = new Map();
     for (const r of mine) {
+      if (r.cardBill) continue;
       const b = { date: r[0], amount: r[1], name: r[2] || "?", purpose: r[6] || "", category: r[4] || r[3] || "", main: r[3] || "", text: "", mandate: "", creditor: "", direction: r[1] < 0 ? "expense" : "income" };
       const key = `n:${nameKey(b.name)}|${b.direction}`;
       if (!groups.has(key)) groups.set(key, { key, list: [] });
@@ -1604,7 +1645,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const yearAgo = iso(addDays(parseIso(lastDate), -365));
     const budgets = items.filter((i) => i.schedule?.frequency === "budget");
     const stemsOf = (text) => wordsOf(text).map((w) => w.slice(0, Math.max(4, w.length - 2)));
-    const rowIndex = new Map((this._ledger?.rows || []).map((r, i) => [r, i]));
+    const rowIndex = this._cleanLedger().index;
     const exKey = (budgetId, date, amount, name) => `x:${budgetId}|${date}|${amount.toFixed(2)}|${nameKey(name).slice(0, 40)}`;
     const budgetRows = budgets.map((budget) => {
       const stems = stemsOf(budget.name);
