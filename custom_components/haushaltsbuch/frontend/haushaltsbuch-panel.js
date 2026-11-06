@@ -1555,7 +1555,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const missing = regular.filter((x) => x.now && !x.item && x.last.direction === "expense" && !ignored.has(x.g.key))
       .sort((a, b) => monthlyEquivalent(b.now) - monthlyEquivalent(a.now));
     this._insightSuggestions = Object.fromEntries(missing.map((x) => [x.g.key, x.now]));
-    const hidden = [...ignored].map((key) => ({ key, name: groups.get(key)?.list.slice(-1)[0]?.name || key.replace(/^n:/, "").replace(/\|expense$/, "") }));
+    const hidden = [...ignored].filter((key) => !key.startsWith("x:")).map((key) => ({ key, name: groups.get(key)?.list.slice(-1)[0]?.name || key.replace(/^n:/, "").replace(/\|expense$/, "") }));
     const hiddenBlock = hidden.length ? `<div class="insight-hidden"><button class="link" data-action="insight-show-ignored">${this._showIgnored ? tr("Ausgeblendete verbergen", "Hide them again") : tr(`${hidden.length} mit „Ist ok“ ausgeblendet · anzeigen`, `${hidden.length} marked “fine” · show`)}</button>
       ${this._showIgnored ? `<ul>${hidden.map((h) => `<li><span>${esc(h.name)}</span><button class="small secondary" data-action="insight-unignore" data-key="${esc(h.key)}">${tr("Wieder anzeigen", "Show again")}</button></li>`).join("")}</ul>` : ""}</div>` : "";
     const missingCard = card(
@@ -1604,6 +1604,8 @@ class HaushaltsbuchPanel extends HTMLElement {
     const yearAgo = iso(addDays(parseIso(lastDate), -365));
     const budgets = items.filter((i) => i.schedule?.frequency === "budget");
     const stemsOf = (text) => wordsOf(text).map((w) => w.slice(0, Math.max(4, w.length - 2)));
+    const rowIndex = new Map((this._ledger?.rows || []).map((r, i) => [r, i]));
+    const exKey = (budgetId, date, amount, name) => `x:${budgetId}|${date}|${amount.toFixed(2)}|${nameKey(name).slice(0, 40)}`;
     const budgetRows = budgets.map((budget) => {
       const stems = stemsOf(budget.name);
       const keys = new Set(history[budget.id]?.bank_keys || []);
@@ -1617,7 +1619,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         const words = wordsOf(`${b.category} ${b.name} ${b.purpose}`);
         if (stems.some((st) => words.some((w) => w.startsWith(st)))) return true;
         return generic && csvCategory(b).category === budget.category;
-      }).map((r) => ({ date: r[0], amount: -r[1], name: r[2] || "?" }));
+      }).map((r) => ({ date: r[0], amount: -r[1], name: r[2] || "?", row: rowIndex.get(r), key: exKey(budget.id, r[0], -r[1], r[2] || "?"), own: assigned.get(`${r[0]}|${Math.abs(r[1]).toFixed(2)}`) === budget.id }));
+      // Payments the user took out of this budget by hand.
+      const removed = hits.filter((h) => ignored.has(h.key));
+      for (const h of removed) hits.splice(hits.indexOf(h), 1);
       // Spending entered in the app (e.g. cash) counts as well.
       const seen = new Set(hits.map((h) => `${h.date}|${h.amount.toFixed(2)}`));
       for (const [date, amount] of history[budget.id]?.spendings || []) {
@@ -1640,7 +1645,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       // Only propose when the payments clearly cover the budget: most months, enough payments.
       const enough = hits.length >= 6 && values.length >= 3 && activeMonths >= Math.ceil(values.length * 0.75);
       const proposal = Math.ceil(typical / 10) * 10;
-      return { budget, hits, count: hits.length, typical, peak, planned, enough, proposal, months: values.length, activeMonths, pot: planned === 0 };
+      return { budget, hits, removed, count: hits.length, typical, peak, planned, enough, proposal, months: values.length, activeMonths, pot: planned === 0 };
     });
     const budgetCard = card(
       tr("Budgets aus echten Zahlen", "Budgets from real numbers"),
@@ -1662,7 +1667,11 @@ class HaushaltsbuchPanel extends HTMLElement {
                 <div class="entry-meta plain">${meta}</div>
                 ${!x.pot && x.count && !x.enough ? `<p class="hint">${tr("Ordne unter „Zahlen“ weitere Umsätze diesem Budget zu, dann wird der Vorschlag genauer.", "Assign more transactions to this budget under “Numbers” to get a proposal.")}</p>` : ""}
                 ${propose ? `<div class="insight-actions"><button class="small" data-action="insight-budget" data-id="${esc(x.budget.id)}" data-amount="${x.proposal}">${tr(`Budget auf ${this._moneyPlain(x.proposal)} setzen`, `Set budget to ${this._moneyPlain(x.proposal)}`)}</button></div>` : ""}
-                ${x.count ? `<details class="insight-hits"><summary>${tr("gezählte Zahlungen ansehen", "show counted payments")}</summary><ul>${shown.map((h) => `<li><span>${shortDate(h.date)}</span><span>${esc(h.name)}</span><b>${this._moneyPlain(h.amount)}</b></li>`).join("")}</ul>${x.hits.length > shown.length ? `<p class="hint">${tr(`und ${x.hits.length - shown.length} weitere`, `and ${x.hits.length - shown.length} more`)}</p>` : ""}</details>` : ""}
+                ${x.count || x.removed.length ? `<details class="insight-hits" data-budget="${esc(x.budget.id)}" ${this._openHits === x.budget.id ? "open" : ""}><summary>${tr("gezählte Zahlungen ansehen", "show counted payments")}</summary>
+                  <p class="hint">${tr("Passt eine Zahlung nicht: „raus“ nimmt sie aus dieser Rechnung, „zuordnen“ ordnet sie woanders hin.", "If a payment doesn't fit: “remove” takes it out of this calculation, “assign” moves it elsewhere.")}</p>
+                  <ul>${shown.map((h) => `<li><span class="hit-main"><span>${shortDate(h.date)}</span> ${esc(h.name)}</span><b>${this._moneyPlain(h.amount)}</b>${h.row === undefined ? `<span class="hit-actions hint">${tr("in der App eingetragen", "entered in the app")}</span>` : `<span class="hit-actions"><button type="button" class="assign-chip" data-action="ledger-assign" data-row="${h.row}" data-current="${h.own ? esc(x.budget.name) : ""}">${tr("zuordnen", "assign")}</button><button type="button" class="assign-chip" data-action="budget-hit-remove" data-budget="${esc(x.budget.id)}" data-key="${esc(h.key)}">${tr("raus", "remove")}</button></span>`}</li>`).join("")}</ul>
+                  ${x.hits.length > shown.length ? `<p class="hint">${tr(`und ${x.hits.length - shown.length} weitere`, `and ${x.hits.length - shown.length} more`)}</p>` : ""}
+                  ${x.removed.length ? `<button type="button" class="link" data-action="budget-hit-restore" data-budget="${esc(x.budget.id)}">${tr(`${x.removed.length} rausgenommen · zurückholen`, `${x.removed.length} removed · restore`)}</button>` : ""}</details>` : ""}
               </div>
               ${!x.pot && x.enough ? `<div class="insight-badge ${tone}">${diff > 0 ? "+" : ""}${diff} %</div>` : ""}</div>`;
           }).join("")}</div>`
@@ -3599,6 +3608,18 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._render();
         break;
       }
+      case "budget-hit-remove": {
+        const st = this._state.user.settings || {};
+        this._openHits = target.dataset.budget;
+        this._saveSpecialSettings({ stats_ignored: [...(st.stats_ignored || []), target.dataset.key] });
+        break;
+      }
+      case "budget-hit-restore": {
+        const st = this._state.user.settings || {};
+        this._openHits = target.dataset.budget;
+        this._saveSpecialSettings({ stats_ignored: (st.stats_ignored || []).filter((k) => !k.startsWith(`x:${target.dataset.budget}|`)) });
+        break;
+      }
       case "insight-show-ignored":
         this._showIgnored = !this._showIgnored;
         this._render();
@@ -4208,8 +4229,10 @@ const STYLES = `
   .insight-hidden li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--divider-color); font-size: 13px; }
   .insight-hits { margin-top: 6px; font-size: 12px; color: var(--secondary-text-color); }
   .insight-hits summary { cursor: pointer; color: var(--primary-color); }
-  .insight-hits li { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 8px; padding: 3px 0; border-top: 1px solid var(--divider-color); }
-  .insight-hits li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .insight-hits li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--divider-color); }
+  .hit-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--primary-text-color); }
+  .hit-main span { color: var(--secondary-text-color); margin-right: 4px; }
+  .hit-actions { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; margin: 0; }
   .insight-hits li b { font-weight: 500; color: var(--primary-text-color); }
   @media (max-width: 600px) {
     .stats-cat-side { width: auto; max-width: 40%; }
