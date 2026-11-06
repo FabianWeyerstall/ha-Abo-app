@@ -269,3 +269,44 @@ def test_spendings_on_budgets_only_and_for_household_members():
         book.update_spending("carla", budget, sid, "2026-11-01", 5)
     book.delete_spending("anna", budget, sid)
     assert book.data["items"][budget]["spendings"] == []
+
+
+def test_bank_keys_survive_normal_edits():
+    book = Book()
+    item_id = book.save_item("anna", {**ITEM, "bank_keys": ["m:DE11ZZZ|KD-1", "m:DE11ZZZ|KD-1", ""]})
+    assert book.data["items"][item_id]["bank_keys"] == ["m:DE11ZZZ|KD-1"]
+    # the item form does not send bank_keys; they must stay
+    book.save_item("anna", {**ITEM, "id": item_id, "name": "Internet"})
+    assert book.data["items"][item_id]["bank_keys"] == ["m:DE11ZZZ|KD-1"]
+    assert book.bank_history("anna")[item_id]["bank_keys"] == ["m:DE11ZZZ|KD-1"]
+    with pytest.raises(ValidationError):
+        book.save_item("anna", {**ITEM, "bank_keys": "nope"})
+
+
+def test_bank_sync_confirms_spends_remembers_and_skips_duplicates():
+    book = Book()
+    hh = book.create_household("anna", "Zuhause", ["ben"])
+    rent = book.save_item("anna", {**ITEM, "name": "Miete", "amount": 850})
+    food = book.save_item("anna", {**ITEM, "name": "Lebensmittel", "schedule": {"frequency": "budget"}, "household_id": hh})
+    payload = {
+        "confirmations": [{"item_id": rent, "due_date": "2026-11-15", "actual_date": "2026-11-16", "actual_amount": -850}],
+        "spendings": [{"item_id": food, "date": "2026-11-20", "amount": -32.98, "note": "Markt"}],
+        "keys": [{"item_id": rent, "key": "n:hausverwaltung|expense"}],
+        "price_changes": [{"item_id": rent, "from": "2026-12-15", "amount": 870}],
+    }
+    assert book.bank_sync("anna", payload) == {"confirmed": 1, "spendings": 1, "skipped": 0, "keys": 1, "price_changes": 1}
+    item = book.data["items"][rent]
+    assert item["confirmations"][0]["actual_date"] == "2026-11-16"
+    assert item["bank_keys"] == ["n:hausverwaltung|expense"]
+    assert item["price_changes"] == [{"from": "2026-12-15", "amount": 870.0}]
+    # a second import of the same file changes nothing
+    again = book.bank_sync("anna", payload)
+    assert again["confirmed"] == 0 and again["spendings"] == 0 and again["skipped"] == 2 and again["keys"] == 0
+    assert len(book.data["items"][food]["spendings"]) == 1
+    # household members may add spendings, but not change someone else's entry
+    assert book.bank_sync("ben", {"spendings": [{"item_id": food, "date": "2026-11-21", "amount": 5}]})["spendings"] == 1
+    with pytest.raises(AccessError):
+        book.bank_sync("ben", {"keys": [{"item_id": food, "key": "c:Lebensmittel"}]})
+    # nothing is applied when one entry is invalid
+    with pytest.raises(ValidationError):
+        book.bank_sync("anna", {"spendings": [{"item_id": rent, "date": "2026-11-22", "amount": 5}]})

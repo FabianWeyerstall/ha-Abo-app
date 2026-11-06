@@ -313,107 +313,255 @@ function nextDue(dateIso, rhythm) {
   return iso(new Date(target.getFullYear(), target.getMonth(), Math.min(d.getDate(), lastDay)));
 }
 
+const CARD_PAYMENT = /karte|kartenzahlung|debitkarte|visa|girocard|pos\b/i;
+const RARE_WORDS = /versicherung|steuer|beitrag|verein|mitglied|jahres|wartung|tüv|gebühr|abo\b|lizenz/i;
+
+/** Does this existing item look like the payee of these bookings? */
+function looksLike(item, name, category, amount, day) {
+  const words = nameKey(item.name).split(" ").filter((w) => w.length >= 4);
+  const key = nameKey(name);
+  if (words.some((w) => key.includes(w))) return true;
+  if (item.category !== category) return false;
+  const expected = Number(item.current_amount ?? item.amount) || 0;
+  if (Math.abs(expected - amount) <= amount * 0.15) return true;
+  // Same category and about the same day of the month: probably the same contract at a new price.
+  const itemDay = Number(String(item.start_date).slice(8));
+  return day && Math.abs(itemDay - day) <= 3 && Math.abs(expected - amount) <= amount * 0.3;
+}
+
 /**
- * Find recurring bookings. Direct debits are grouped by creditor ID and
- * mandate, everything else by payee name and direction.
- * Returns {suggestions, budgets, from, to, count}.
+ * Compare bank bookings with the existing items.
+ * - bookings that belong to an item (remembered bank key or a look-alike) are
+ *   matched to its open dates and confirmed, price changes are noticed;
+ * - card payments of a budget's category become its spendings;
+ * - the rest is checked for regular, rare and rolling payments.
+ * `entries` are forecast entries of the own items over the file's period,
+ * `history` is the answer of haushaltsbuch/bank/history.
  */
-function detectRecurring(bookings, existingItems) {
+function analyzeBank(bookings, items, history, entries) {
   const from = bookings.reduce((m, b) => (b.date < m ? b.date : m), bookings[0].date);
   const to = bookings.reduce((m, b) => (b.date > m ? b.date : m), bookings[0].date);
+  const recurringItems = items.filter((i) => i.schedule?.frequency !== "budget");
+  const budgetItems = items.filter((i) => i.schedule?.frequency === "budget");
+  const keyOwner = new Map();
+  for (const i of items) for (const k of history[i.id]?.bank_keys || []) keyOwner.set(k, i);
+
   const groups = new Map();
   for (const b of bookings) {
     const direction = b.amount < 0 ? "expense" : "income";
     const key = b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${direction}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ ...b, direction });
+    if (!groups.has(key)) groups.set(key, { key, list: [] });
+    groups.get(key).list.push({ ...b, direction, key });
   }
-  const used = new Set();
-  const suggestions = [];
-  for (const [key, list] of groups) {
-    if (list.length < 2) continue;
-    list.sort((a, b) => a.date.localeCompare(b.date));
-    const gaps = list.slice(1).map((b, i) => daysBetween(list[i].date, b.date)).filter((g) => g > 3);
-    if (!gaps.length) continue;
-    const gap = median(gaps);
-    let rhythm = CSV_RHYTHMS.find((r) => gap >= r.min && gap <= r.max);
-    if (!rhythm || list.length < rhythm.minCount) continue;
-    // e.g. salary on the last Thursday: the day of the month moves, the weekday stays.
-    const sameDay = list.every((b) => b.date.slice(8) === list[0].date.slice(8));
-    const weekdayRule = rhythm.frequency === "monthly" && rhythm.interval === 1 && !sameDay ? commonWeekday(list.map((b) => b.date)) : null;
-    if (weekdayRule) rhythm = { ...rhythm, ...weekdayRule };
-    if (gaps.filter((g) => Math.abs(g - gap) > gap * 0.25).length > gaps.length / 4) continue;
-    const last = list[list.length - 1];
-    // A booking that stopped well before the end of the file is probably cancelled.
-    if (daysBetween(last.date, to) > gap * 1.6) continue;
-    const amounts = list.slice(-6).map((b) => Math.abs(b.amount));
-    const amount = Math.abs(last.amount);
-    const spread = Math.max(...amounts.map((a) => Math.abs(a - amount))) / amount;
-    const variance = spread < 0.005 ? 0 : Math.min(100, Math.ceil((spread * 100) / 5) * 5);
-    const { category, icon } = csvCategory(last);
-    const name = category === "Gehalt" ? tr("Gehalt", "Salary") : tidyName(last.name);
-    const twin = existingItems.find((i) => {
-      if (i.direction !== last.direction || i.schedule?.frequency === "budget") return false;
-      const words = nameKey(i.name).split(" ").filter(Boolean);
-      const sameName = words.some((w) => nameKey(name).includes(w));
-      const sameAmount = i.category === category && Math.abs((i.current_amount ?? i.amount) - amount) <= amount * 0.1;
-      return sameName || sameAmount;
-    });
-    list.forEach((b) => used.add(b));
-    // Booked on Monday after a weekend: the nominal date is the usual day of the month.
-    let due = last.date;
-    if (rhythm.frequency !== "weekly" && !weekdayRule) {
-      const counts = {};
-      for (const b of list) counts[b.date.slice(8)] = (counts[b.date.slice(8)] || 0) + 1;
-      const day = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]);
-      const d = parseIso(last.date);
-      const candidate = new Date(d.getFullYear(), d.getMonth(), Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
-      if (Math.abs(daysBetween(iso(candidate), last.date)) <= 4) due = iso(candidate);
-    }
-    suggestions.push({
-      key,
-      name,
-      direction: last.direction,
-      amount,
-      variance,
-      category,
-      icon,
-      count: list.length,
-      first: list[0].date,
-      last: last.date,
-      due,
-      next: nextDue(due, rhythm),
-      debit: Boolean(last.mandate || /lastschrift/i.test(last.text)),
-      schedule: { frequency: rhythm.frequency, interval: rhythm.interval, unit: "months", ...(weekdayRule || {}) },
-      certainty: variance > 20 ? "unsicher" : variance > 0 ? "wahrscheinlich" : "sicher",
-      existing: twin ? twin.name : null,
-      checked: !twin,
-    });
-  }
-  suggestions.sort((a, b) => (a.direction === b.direction ? b.amount / (b.schedule.interval || 1) - a.amount / (a.schedule.interval || 1) : a.direction === "income" ? -1 : 1));
 
-  // Frequent irregular spending (e.g. groceries by card) → monthly budget idea.
+  const used = new Set();
+  const matches = [];
+  const suggestions = [];
+  const others = [];
+  for (const group of groups.values()) {
+    const list = group.list.sort((a, b) => a.date.localeCompare(b.date));
+    const last = list[list.length - 1];
+    const amount = Math.abs(last.amount);
+    const { category, icon } = csvCategory(last);
+    const card = list.every((b) => CARD_PAYMENT.test(`${b.text} ${b.purpose}`));
+    const day = Number(last.date.slice(8));
+    // 1. Known item: remembered key, otherwise a look-alike (not for card payments).
+    let item = keyOwner.get(group.key);
+    if (item?.schedule?.frequency === "budget") continue; // handled with the budgets below
+    let remembered = Boolean(item);
+    if (!item && !card) item = recurringItems.find((i) => i.direction === last.direction && looksLike(i, last.name, category, amount, day));
+    if (item) {
+      const match = matchItem(item, list, entries, history[item.id]);
+      if (match.confirmations.length || match.priceChange || remembered) {
+        list.forEach((b) => used.add(b));
+        if (!match.confirmations.length && !match.priceChange) continue; // known and up to date
+        matches.push({ ...match, key: `i:${item.id}`, bankKey: group.key, item, bankName: tidyName(last.name), remembered, checked: true });
+        continue;
+      }
+    }
+    // 2. New regular payment.
+    const suggestion = recurringSuggestion(group, list, to, category, icon);
+    if (suggestion) {
+      list.forEach((b) => used.add(b));
+      const twin = recurringItems.find((i) => i.direction === suggestion.direction && looksLike(i, suggestion.name, category, amount, day));
+      suggestions.push({ ...suggestion, existing: twin ? twin.name : null, checked: !twin, target: "new" });
+      continue;
+    }
+    // 3. Rare (seen once, yearly?) or rolling (irregular but repeating).
+    const other = card ? null : rareSuggestion(group, list, to, category, icon);
+    const rolling = rollingSuggestion(group, list, to, category, icon);
+    if (other || rolling) {
+      list.forEach((b) => used.add(b));
+      others.push({ ...(rolling || other), checked: false, target: "new" });
+    }
+  }
+
+  // Budgets: card payments by bank category.
   const months = Math.max(1, daysBetween(from, to) / 30.4);
   const byCategory = new Map();
   for (const b of bookings) {
     if (used.has(b) || b.amount > 0) continue;
     const { category, icon } = csvCategory(b);
     const name = b.category || category;
-    if (!byCategory.has(name)) byCategory.set(name, { name, category, icon, total: 0, count: 0 });
+    if (!byCategory.has(name)) byCategory.set(name, { name, category, icon, total: 0, list: [] });
     const entry = byCategory.get(name);
     entry.total += -b.amount;
-    entry.count += 1;
+    entry.list.push(b);
   }
-  const budgets = [...byCategory.values()]
-    .filter((c) => c.count >= months * 2 && c.category !== tr("Sonstiges", "Other"))
-    .map((c) => {
-      const amount = Math.ceil(c.total / months / 10) * 10;
-      const twin = existingItems.find((i) => i.schedule?.frequency === "budget" && i.category === c.category);
-      return { key: `b:${c.name}`, name: c.name, category: c.category, icon: c.icon, amount, count: c.count, existing: twin ? twin.name : null, checked: false };
-    })
-    .sort((a, b) => b.amount - a.amount)
-    .slice(0, 3);
-  return { suggestions, budgets, from, to, count: bookings.length };
+  const budgetMatches = [];
+  const budgets = [];
+  for (const c of byCategory.values()) {
+    const budget = keyOwner.get(`c:${c.name}`) || budgetItems.find((i) => i.category === c.category || i.name.toLowerCase() === c.name.toLowerCase());
+    if (budget) {
+      const known = new Set((history[budget.id]?.spendings || []).map(([d, a]) => `${d}|${a}`));
+      const fresh = c.list.filter((b) => b.date >= budget.start_date && !known.has(`${b.date}|${Math.abs(b.amount)}`));
+      if (fresh.length) {
+        budgetMatches.push({
+          key: `s:${budget.id}`,
+          item: budget,
+          bankKey: `c:${c.name}`,
+          spendings: fresh.map((b) => ({ item_id: budget.id, date: b.date, amount: Math.abs(b.amount), note: tidyName(b.name) })),
+          total: fresh.reduce((a, b) => a - b.amount, 0),
+          checked: true,
+        });
+      }
+    } else if (c.list.length >= months * 2 && c.category !== tr("Sonstiges", "Other")) {
+      budgets.push({ key: `b:${c.name}`, name: c.name, category: c.category, icon: c.icon, amount: Math.ceil(c.total / months / 10) * 10, count: c.list.length, bankKey: `c:${c.name}`, cardPayments: c.list, checked: false });
+    }
+  }
+  budgets.sort((a, b) => b.amount - a.amount).splice(3);
+  suggestions.sort((a, b) => (a.direction === b.direction ? b.amount / (b.schedule.interval || 1) - a.amount / (a.schedule.interval || 1) : a.direction === "income" ? -1 : 1));
+  return { matches: [...matches, ...budgetMatches], suggestions, others, budgets, from, to, count: bookings.length };
+}
+
+/** Bookings of an existing item → confirmations of its open dates, and a possible price change. */
+function matchItem(item, list, entries, history) {
+  const confirmed = new Set(history?.confirmed || []);
+  const open = entries.filter((e) => e.item_id === item.id && e.status === null && !confirmed.has(e.due_date));
+  const window = Math.max(10, (item.date_tolerance_days || 0) + 7);
+  const taken = new Set();
+  const confirmations = [];
+  const pairs = [];
+  for (const b of list) {
+    const best = open
+      .filter((e) => !taken.has(e.due_date) && Math.abs(daysBetween(e.date, b.date)) <= window)
+      .sort((x, y) => Math.abs(daysBetween(x.date, b.date)) - Math.abs(daysBetween(y.date, b.date)))[0];
+    if (!best) continue;
+    taken.add(best.due_date);
+    confirmations.push({ item_id: item.id, due_date: best.due_date, actual_date: b.date, actual_amount: Math.abs(b.amount) });
+    pairs.push({ due: best.due_date, expected: Math.abs(best.amount), actual: Math.abs(b.amount) });
+  }
+  // Price change: the last bookings agree with each other but not with the item.
+  let priceChange = null;
+  const variance = Number(item.amount_variance_pct) || 0;
+  const recent = pairs.slice(-3);
+  if (variance === 0 && recent.length >= 2) {
+    const now = recent[recent.length - 1].actual;
+    const steady = recent.every((p) => Math.abs(p.actual - now) < 0.01);
+    const differs = Math.abs(recent[recent.length - 1].expected - now) > Math.max(0.5, now * 0.005);
+    if (steady && differs) {
+      let firstNew = pairs.length - 1;
+      while (firstNew > 0 && Math.abs(pairs[firstNew - 1].actual - now) < 0.01) firstNew--;
+      priceChange = { item_id: item.id, from: pairs[firstNew].due, amount: now, before: recent[recent.length - 1].expected, checked: true };
+    }
+  }
+  return { confirmations, priceChange, lastDate: list[list.length - 1].date };
+}
+
+function recurringSuggestion(group, list, to, category, icon) {
+  if (list.length < 2) return null;
+  const gaps = list.slice(1).map((b, i) => daysBetween(list[i].date, b.date)).filter((g) => g > 3);
+  if (!gaps.length) return null;
+  const gap = median(gaps);
+  let rhythm = CSV_RHYTHMS.find((r) => gap >= r.min && gap <= r.max);
+  if (!rhythm || list.length < rhythm.minCount) return null;
+  if (gaps.filter((g) => Math.abs(g - gap) > gap * 0.25).length > gaps.length / 4) return null;
+  const last = list[list.length - 1];
+  // A booking that stopped well before the end of the file is probably cancelled.
+  if (daysBetween(last.date, to) > gap * 1.6) return null;
+  const sameDay = list.every((b) => b.date.slice(8) === list[0].date.slice(8));
+  const weekdayRule = rhythm.frequency === "monthly" && rhythm.interval === 1 && !sameDay ? commonWeekday(list.map((b) => b.date)) : null;
+  if (weekdayRule) rhythm = { ...rhythm, ...weekdayRule };
+  const amount = Math.abs(last.amount);
+  // A step in the amount (e.g. new electricity instalment) is a price change, not a variation.
+  let since = list.length - 1;
+  while (since > 0 && Math.abs(Math.abs(list[since - 1].amount) - amount) < 0.01) since--;
+  const steadyNow = list.length - since >= 2 && since > 0;
+  const considered = steadyNow ? list.slice(since) : list.slice(-6);
+  const spread = Math.max(...considered.map((b) => Math.abs(Math.abs(b.amount) - amount))) / amount;
+  const variance = spread < 0.005 ? 0 : Math.min(100, Math.ceil((spread * 100) / 5) * 5);
+  // Nominal date: the usual day of the month when booked after a weekend.
+  let due = last.date;
+  if (rhythm.frequency !== "weekly" && !weekdayRule) {
+    const counts = {};
+    for (const b of list) counts[b.date.slice(8)] = (counts[b.date.slice(8)] || 0) + 1;
+    const usual = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]);
+    const d = parseIso(last.date);
+    const candidate = new Date(d.getFullYear(), d.getMonth(), Math.min(usual, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+    if (Math.abs(daysBetween(iso(candidate), last.date)) <= 4) due = iso(candidate);
+  }
+  return {
+    key: group.key,
+    bankKey: group.key,
+    name: category === "Gehalt" ? tr("Gehalt", "Salary") : tidyName(last.name),
+    direction: last.direction,
+    amount,
+    variance,
+    category,
+    icon,
+    count: list.length,
+    first: list[0].date,
+    last: last.date,
+    due,
+    next: nextDue(due, rhythm),
+    debit: Boolean(last.mandate || /lastschrift/i.test(last.text)),
+    priceStep: steadyNow ? { since: list[since].date, before: Math.abs(list[since - 1].amount) } : null,
+    schedule: { frequency: rhythm.frequency, interval: rhythm.interval, unit: "months", ...(weekdayRule || {}) },
+    tolerance: 0,
+    certainty: variance > 20 ? "unsicher" : variance > 0 ? "wahrscheinlich" : "sicher",
+  };
+}
+
+/** Seen once, looks like a yearly fee (insurance, club, tax): ask whether it repeats. */
+function rareSuggestion(group, list, to, category, icon) {
+  if (list.length !== 1) return null;
+  const b = list[0];
+  if (b.amount > -30 || !RARE_WORDS.test(`${b.name} ${b.purpose} ${b.category}`)) return null;
+  // In a file of more than a year it would have come again already.
+  if (daysBetween(b.date, to) > 380) return null;
+  const rhythm = { frequency: "yearly", interval: 1 };
+  return {
+    key: group.key, bankKey: group.key, kind: "rare",
+    name: tidyName(b.name), direction: "expense", amount: -b.amount, variance: 0, category, icon,
+    count: 1, first: b.date, last: b.date, due: b.date, next: nextDue(b.date, rhythm),
+    debit: Boolean(b.mandate || /lastschrift/i.test(b.text)),
+    schedule: { frequency: "yearly", interval: 1, unit: "months" }, tolerance: 14, certainty: "unsicher",
+  };
+}
+
+/** Irregular but repeating, like the hairdresser: rolling from the last date. */
+function rollingSuggestion(group, list, to, category, icon) {
+  if (list.length < 3) return null;
+  const gaps = list.slice(1).map((b, i) => daysBetween(list[i].date, b.date));
+  const gap = median(gaps);
+  if (gap < 20 || gap > 120 || Math.min(...gaps) < 10) return null;
+  const last = list[list.length - 1];
+  if (daysBetween(last.date, to) > gap * 2) return null;
+  const amounts = list.map((b) => Math.abs(b.amount));
+  const avg = amounts.reduce((a, x) => a + x, 0) / amounts.length;
+  const spread = Math.max(...amounts.map((a) => Math.abs(a - avg))) / avg;
+  if (spread > 0.4) return null;
+  const weeks = gap < 63;
+  const interval = Math.max(1, Math.round(weeks ? gap / 7 : gap / 30.4));
+  const unit = weeks ? "weeks" : "months";
+  return {
+    key: group.key, bankKey: group.key, kind: "rolling",
+    name: tidyName(last.name), direction: last.direction, amount: Math.round(avg * 100) / 100,
+    variance: Math.min(100, Math.ceil((spread * 100) / 5) * 5), category, icon,
+    count: list.length, first: list[0].date, last: last.date, due: last.date,
+    next: iso(addDays(parseIso(last.date), Math.round(gap))), debit: false, learnedDays: Math.round(gap),
+    schedule: { frequency: "rolling", interval, unit }, tolerance: 0, certainty: "wahrscheinlich",
+  };
 }
 
 function presetOf(schedule) {
@@ -1824,28 +1972,81 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _renderCsvForm(d) {
-    const row = (s, budget = false) => `<label class="csv-row ${s.existing ? "is-existing" : ""}">
-        <input type="checkbox" data-change="csv-check" data-key="${esc(s.key)}" ${s.checked ? "checked" : ""}>
-        <div class="entry-icon">${this._icon(s.icon)}</div>
+    const check = (s, change = "csv-check") => `<input type="checkbox" data-change="${change}" data-key="${esc(s.key)}" ${s.checked ? "checked" : ""}>`;
+    const nameField = (s) => `<input class="csv-name" type="text" data-change="csv-name" data-key="${esc(s.key)}" value="${esc(s.name)}" aria-label="${tr("Name", "Name")}">`;
+    const amount = (value, direction) => `<div class="entry-amount ${direction === "expense" ? "neg" : "pos"}">${this._money(direction === "expense" ? -value : value, true)}</div>`;
+    const count = (n, one, many) => (n === 1 ? one : many.replace("#", n));
+
+    const matchRow = (m) => {
+      const budget = Boolean(m.spendings);
+      const meta = budget
+        ? tr(`${count(m.spendings.length, "1 Ausgabe", "# Ausgaben")} eintragen`, `add ${count(m.spendings.length, "1 expense", "# expenses")}`)
+        : m.confirmations.length
+          ? tr(`${count(m.confirmations.length, "1 Buchung", "# Buchungen")} abhaken · zuletzt ${shortDate(m.lastDate)}`, `confirm ${count(m.confirmations.length, "1 booking", "# bookings")} · last ${shortDate(m.lastDate)}`)
+          : tr("schon alles abgehakt", "everything confirmed already");
+      const learn = m.remembered ? "" : `<span class="chip shared">${tr(`erkannt an „${esc(m.bankName || m.bankKey.slice(2))}“, wird gemerkt`, `recognised by “${esc(m.bankName || m.bankKey.slice(2))}”, will be remembered`)}</span>`;
+      const price = m.priceChange
+        ? `<label class="check csv-price">${check({ key: m.key, checked: m.priceChange.checked }, "csv-price")} ${tr(`Neuer Preis ab ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} statt ${this._moneyPlain(m.priceChange.before)}`, `New price from ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} instead of ${this._moneyPlain(m.priceChange.before)}`)}</label>`
+        : "";
+      return `<div class="csv-row-wrap"><label class="csv-row">
+          ${check(m)}
+          <div class="entry-icon">${this._icon(m.item.icon)}</div>
+          <div class="entry-main">
+            <div class="entry-name">${esc(m.item.name)}</div>
+            <div class="entry-meta">${meta} ${learn}</div>
+          </div>
+          ${budget ? amount(m.spendings.reduce((a, x) => a + x.amount, 0), "expense") : ""}
+        </label>${price}</div>`;
+    };
+
+    const own = (direction) => d.items.filter((i) => i.direction === direction && i.schedule?.frequency !== "budget");
+    const newRow = (s) => {
+      const meta = s.kind === "rare"
+        ? tr(`einmal gesehen am ${shortDate(s.last)} · jährlich? nächste etwa ${shortDate(s.next)}`, `seen once on ${shortDate(s.last)} · yearly? next around ${shortDate(s.next)}`)
+        : s.kind === "rolling"
+          ? tr(`gleitend, etwa alle ${s.learnedDays} Tage · ${s.count}× gebucht`, `rolling, about every ${s.learnedDays} days · booked ${s.count}×`)
+          : `${esc(scheduleLabel(s))} · ${tr("nächste am", "next on")} ${shortDate(s.next)} · ${s.count}× ${s.debit ? tr("Lastschrift", "direct debit") : tr("gebucht", "booked")}${s.variance ? tr(` · schwankt bis ${s.variance} %`, ` · varies up to ${s.variance} %`) : ""}`;
+      const step = s.priceStep ? `<span class="chip contract">${tr(`seit ${shortDate(s.priceStep.since)} ${this._moneyPlain(s.amount)} statt ${this._moneyPlain(s.priceStep.before)}`, `since ${shortDate(s.priceStep.since)} ${this._moneyPlain(s.amount)} instead of ${this._moneyPlain(s.priceStep.before)}`)}</span>` : "";
+      const targets = own(s.direction);
+      const target = targets.length
+        ? `<select class="csv-target" data-change="csv-target" data-key="${esc(s.key)}" aria-label="${tr("Zuordnen", "Assign")}">
+            <option value="new" ${s.target === "new" ? "selected" : ""}>${tr("als neuer Posten", "as a new entry")}</option>
+            ${targets.map((i) => `<option value="${esc(i.id)}" ${s.target === i.id ? "selected" : ""}>${tr("gehört zu", "belongs to")}: ${esc(i.name)}</option>`).join("")}
+          </select>`
+        : "";
+      return `<div class="csv-row-wrap"><label class="csv-row">
+          ${check(s)}
+          <div class="entry-icon">${this._icon(s.icon)}</div>
+          <div class="entry-main">
+            ${s.target === "new" ? nameField(s) : `<div class="entry-name">${esc(s.name)}</div>`}
+            <div class="entry-meta">${meta} ${s.target === "new" ? this._chip(s.certainty) : ""} ${step}</div>
+          </div>
+          ${amount(s.amount, s.direction)}
+        </label>${target}</div>`;
+    };
+
+    const budgetRow = (b) => `<div class="csv-row-wrap"><label class="csv-row">
+        ${check(b)}
+        <div class="entry-icon">${this._icon(b.icon)}</div>
         <div class="entry-main">
-          <input class="csv-name" type="text" data-change="csv-name" data-key="${esc(s.key)}" value="${esc(s.name)}" aria-label="${tr("Name", "Name")}">
-          <div class="entry-meta">${budget
-            ? tr(`Budget pro Monat · ${s.count} Kartenzahlungen o.ä.`, `monthly budget · ${s.count} card payments etc.`)
-            : `${esc(scheduleLabel(s))} · ${tr("nächste am", "next on")} ${shortDate(s.next)} · ${s.count}× ${s.debit ? tr("Lastschrift", "direct debit") : tr("gebucht", "booked")}${s.variance ? tr(` · schwankt bis ${s.variance} %`, ` · varies up to ${s.variance} %`) : ""}`}
-            ${budget ? "" : this._chip(s.certainty)}
-            ${s.existing ? `<span class="chip skipped">${tr(`schon da als „${esc(s.existing)}“`, `exists as “${esc(s.existing)}”`)}</span>` : ""}</div>
+          ${nameField(b)}
+          <div class="entry-meta">${tr(`Budget pro Monat · Durchschnitt aus ${b.count} Kartenzahlungen`, `monthly budget · average of ${b.count} card payments`)}</div>
         </div>
-        <div class="entry-amount ${budget || s.direction === "expense" ? "neg" : "pos"}">${this._money(budget || s.direction === "expense" ? -s.amount : s.amount, true)}</div>
-      </label>`;
-    const picked = this._csvPicked(d).length;
+        ${amount(b.amount, "expense")}
+      </label></div>`;
+
+    const section = (title, hint, rows) => (rows ? `<h3 class="csv-sub">${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ""}<div class="csv-list">${rows}</div>` : "");
+    const picked = this._csvCounts(d);
+    const nothing = !d.matches.length && !d.suggestions.length && !d.others.length && !d.budgets.length;
     return `<form data-form="csv">
-      <h2>${tr("Wiederkehrende Buchungen gefunden", "Recurring payments found")}</h2>
-      <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}. Darin stecken <b>${d.suggestions.length} regelmäßige Buchungen</b>.`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}, with <b>${d.suggestions.length} regular payments</b>.`)}</p>
-      ${d.suggestions.length ? `<div class="csv-list">${d.suggestions.map((s) => row(s)).join("")}</div>` : `<p class="hint">${tr("Keine regelmäßigen Buchungen erkannt. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "No regular payments detected. For good suggestions the file should cover at least 6 to 12 months.")}</p>`}
-      ${d.budgets.length ? `<h3 class="csv-sub">${tr("Als Budget anlegen?", "Create as a budget?")}</h3>
-      <p class="hint">${tr("Viele unregelmäßige Ausgaben derselben Kategorie, als Durchschnitt pro Monat.", "Many irregular expenses of the same category, as an average per month.")}</p>
-      <div class="csv-list">${d.budgets.map((b) => row(b, true)).join("")}</div>` : ""}
-      <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert werden nur die angehakten Posten, jeweils ab der letzten Buchung, die als bestätigt übernommen wird. Turnus, Kategorie und Symbol kannst du danach im Posten ändern.", "The file is only read here in the browser. Only the ticked entries are saved, each starting from its last booking, which is taken over as confirmed. You can change interval, category and icon in the entry afterwards.")}</p>
+      <h2>${tr("Umsätze abgleichen", "Compare transactions")}</h2>
+      <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}.`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}.`)}</p>
+      ${nothing ? `<p class="hint">${tr("Nichts Neues gefunden. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "Nothing new found. For good suggestions the file should cover at least 6 to 12 months.")}</p>` : ""}
+      ${section(tr("Passt zu deinen Posten", "Matches your entries"), tr("Gekommene Buchungen werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen im passenden Budget.", "Bookings that arrived are confirmed with their real date and amount; card payments go into the matching budget."), d.matches.map(matchRow).join(""))}
+      ${section(tr("Neue regelmäßige Buchungen", "New regular payments"), "", d.suggestions.map(newRow).join(""))}
+      ${section(tr("Selten oder unregelmäßig", "Rare or irregular"), tr("Nur einmal gesehen oder ohne festen Abstand. Gleitende Posten lernen den Abstand weiter, sobald du Termine bestätigst.", "Seen only once or without a fixed gap. Rolling entries keep learning the gap as you confirm dates."), d.others.map(newRow).join(""))}
+      ${section(tr("Als Budget anlegen?", "Create as a budget?"), tr("Viele unregelmäßige Ausgaben derselben Kategorie. Die Kartenzahlungen dieses Monats werden gleich eingetragen.", "Many irregular expenses of the same category. This month's card payments are added right away."), d.budgets.map(budgetRow).join(""))}
+      <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert wird nur, was angehakt ist. Das Haushaltsbuch merkt sich, welche Lastschrift zu welchem Posten gehört, und ordnet sie beim nächsten Import von selbst zu.", "The file is only read here in the browser. Only what is ticked is saved. The Household Budget remembers which direct debit belongs to which entry and assigns it by itself next time.")}</p>
       <div class="dialog-actions"><span></span><div>
         <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
         <button type="submit" class="csv-submit" ${picked ? "" : "disabled"}>${this._csvSubmitLabel(picked)}</button>
@@ -1853,34 +2054,69 @@ class HaushaltsbuchPanel extends HTMLElement {
     </form>`;
   }
 
-  _csvPicked(d) {
-    return [...d.suggestions, ...d.budgets].filter((s) => s.checked);
+  _csvAll(d) {
+    return [...d.matches, ...d.suggestions, ...d.others, ...d.budgets];
+  }
+
+  _csvCounts(d) {
+    return this._csvAll(d).filter((s) => s.checked).length;
   }
 
   _csvSubmitLabel(n) {
-    return n === 1 ? tr("1 Posten übernehmen", "Add 1 entry") : tr(`${n} Posten übernehmen`, `Add ${n} entries`);
+    return n === 1 ? tr("1 Vorschlag übernehmen", "Apply 1 suggestion") : tr(`${n} Vorschläge übernehmen`, `Apply ${n} suggestions`);
   }
 
-  _csvItems(d) {
+  /** Save what is ticked: new entries first, then one sync with confirmations, spendings, keys and prices. */
+  async _csvApply(d) {
     const monthStart = iso(new Date(today().getFullYear(), today().getMonth(), 1));
     const note = tr(`Aus Bank-CSV übernommen (${d.fileName})`, `Taken from bank CSV (${d.fileName})`);
-    return this._csvPicked(d).map((s) =>
-      s.key.startsWith("b:")
-        ? { name: s.name, direction: "expense", amount: s.amount, category: s.category, icon: s.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note }
-        : {
-            name: s.name,
-            direction: s.direction,
-            amount: s.amount,
-            amount_variance_pct: s.variance,
-            category: s.category,
-            icon: s.icon,
-            start_date: s.due,
-            schedule: s.schedule,
-            weekend_shift: s.category === "Gehalt" ? "previous" : null,
-            note,
-            confirmations: [{ due_date: s.due, status: "booked", actual_date: s.last, actual_amount: s.amount }],
-          }
-    );
+    const fresh = [...d.suggestions, ...d.others].filter((s) => s.checked && s.target === "new");
+    const budgets = d.budgets.filter((b) => b.checked);
+    const items = [
+      ...fresh.map((s) => ({
+        name: s.name,
+        direction: s.direction,
+        amount: s.amount,
+        amount_variance_pct: s.variance,
+        date_tolerance_days: s.tolerance || 0,
+        category: s.category,
+        icon: s.icon,
+        start_date: s.due,
+        schedule: s.schedule,
+        weekend_shift: s.category === "Gehalt" ? "previous" : null,
+        note,
+        bank_keys: [s.bankKey],
+        confirmations: [{ due_date: s.due, status: "booked", actual_date: s.last, actual_amount: s.amount }],
+      })),
+      ...budgets.map((b) => ({ name: b.name, direction: "expense", amount: b.amount, category: b.category, icon: b.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note, bank_keys: [b.bankKey] })),
+    ];
+    const result = { added: 0, confirmed: 0, spendings: 0, price_changes: 0 };
+    if (items.length) result.added = (await this._ws("import", { data: { format: "haushaltsbuch", items }, replace: false })).added;
+
+    const sync = { confirmations: [], spendings: [], keys: [], price_changes: [] };
+    for (const m of d.matches.filter((x) => x.checked)) {
+      if (m.spendings) sync.spendings.push(...m.spendings);
+      else sync.confirmations.push(...m.confirmations);
+      if (!m.remembered) sync.keys.push({ item_id: m.item.id, key: m.bankKey });
+    }
+    for (const m of d.matches) if (m.priceChange?.checked) sync.price_changes.push({ item_id: m.item.id, from: m.priceChange.from, amount: m.priceChange.amount });
+    // Assigned to an existing entry: remember the key and confirm its bookings.
+    for (const s of [...d.suggestions, ...d.others].filter((x) => x.checked && x.target !== "new")) {
+      const item = d.items.find((i) => i.id === s.target);
+      sync.keys.push({ item_id: item.id, key: s.bankKey });
+      sync.confirmations.push(...matchItem(item, d.bookingsByKey[s.key] || [], d.entries, d.history[item.id]).confirmations);
+    }
+    if (budgets.length) {
+      const state = await this._ws("state");
+      for (const b of budgets) {
+        const item = state.items.find((i) => i.editable && i.name === b.name && i.schedule?.frequency === "budget");
+        if (item) sync.spendings.push(...b.cardPayments.filter((p) => p.date >= item.start_date).map((p) => ({ item_id: item.id, date: p.date, amount: Math.abs(p.amount), note: tidyName(p.name) })));
+      }
+    }
+    if (sync.confirmations.length || sync.spendings.length || sync.keys.length || sync.price_changes.length) {
+      Object.assign(result, await this._ws("bank/sync", sync));
+    }
+    return result;
   }
 
   _renderNotice(d) {
@@ -1919,6 +2155,35 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
+  async _openCsv(fileName, text) {
+    const bookings = parseBankCsv(text);
+    const items = this._state.items.filter((i) => i.owner === this._state.user.id);
+    const from = bookings.reduce((m, b) => (b.date < m ? b.date : m), bookings[0].date);
+    const to = bookings.reduce((m, b) => (b.date > m ? b.date : m), bookings[0].date);
+    // Open dates of the own entries over the file's period, in steps the server allows.
+    const entries = [];
+    for (let start = addDays(parseIso(from), -14); start <= addDays(parseIso(to), 7); start = addDays(start, 366)) {
+      const end = [addDays(start, 365), addDays(parseIso(to), 7)].sort((a, b) => a - b)[0];
+      const f = await this._ws("forecast", { scope: "me", start: iso(start), end: iso(end) });
+      entries.push(...f.days.flatMap((day) => day.entries));
+    }
+    const history = await this._ws("bank/history");
+    const analysis = analyzeBank(bookings, items, history, entries);
+    const bookingsByKey = {};
+    for (const b of bookings) {
+      const key = b.creditor ? `m:${b.creditor}|${b.mandate}` : `n:${nameKey(b.name)}|${b.amount < 0 ? "expense" : "income"}`;
+      (bookingsByKey[key] ||= []).push(b);
+    }
+    // A look-alike entry is pre-selected as target, so its bookings are confirmed instead of a duplicate.
+    for (const s of analysis.suggestions) {
+      const twin = s.existing && items.find((i) => i.name === s.existing);
+      if (twin) Object.assign(s, { target: twin.id, checked: true });
+    }
+    this._error = null;
+    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, ...analysis };
+    this._render();
+  }
+
   async _readImportFile(input) {
     const file = input.files?.[0];
     input.value = "";
@@ -1926,10 +2191,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     try {
       const text = await file.text();
       if (/\.csv$/i.test(file.name) || !text.trim().startsWith("{")) {
-        const own = this._state.items.filter((i) => i.owner === this._state.user.id);
-        this._error = null;
-        this._dialog = { type: "csv", fileName: file.name, ...detectRecurring(parseBankCsv(text), own) };
-        this._render();
+        await this._openCsv(file.name, text);
         return;
       }
       const data = JSON.parse(text);
@@ -2096,15 +2358,17 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: this._parsedAmount(f.get("actual_amount"), null) })
       );
     } else if (kind === "csv") {
-      const items = this._csvItems(this._dialog);
+      const d = this._dialog;
       this._run(async () => {
-        const r = await this._ws("import", { data: { format: "haushaltsbuch", items }, replace: false });
+        const r = await this._csvApply(d);
+        const parts = [
+          r.added && tr(`${r.added} neue Posten`, `${r.added} new entries`),
+          r.confirmed && tr(`${r.confirmed} Buchungen abgehakt`, `${r.confirmed} bookings confirmed`),
+          r.spendings && tr(`${r.spendings} Budget-Ausgaben eingetragen`, `${r.spendings} budget expenses added`),
+          r.price_changes && tr(`${r.price_changes} Preisänderungen`, `${r.price_changes} price changes`),
+        ].filter(Boolean);
         setTimeout(() => {
-          this._dialog = {
-            type: "notice",
-            title: tr("Übernommen", "Added"),
-            text: tr(`${r.added} Posten angelegt${r.skipped ? `, ${r.skipped} gab es schon` : ""}. Du findest sie unter „Posten“.`, `${r.added} entries added${r.skipped ? `, ${r.skipped} already existed` : ""}. You find them under “Entries”.`),
-          };
+          this._dialog = { type: "notice", title: tr("Abgleich fertig", "Done"), text: parts.length ? `${parts.join(", ")}.` : tr("Es war schon alles da.", "Everything was there already.") };
           this._render();
         });
       });
@@ -2178,13 +2442,23 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._saveSpecialSettings({ special_min_amount: Number(el.value) || 0 });
     } else if (kind === "import-file") {
       this._readImportFile(el);
-    } else if (kind === "csv-check" || kind === "csv-name") {
+    } else if (kind === "csv-check" || kind === "csv-name" || kind === "csv-price" || kind === "csv-target") {
       const d = this._dialog;
-      const s = [...d.suggestions, ...d.budgets].find((x) => x.key === el.dataset.key);
+      const s = this._csvAll(d).find((x) => x.key === el.dataset.key);
       if (kind === "csv-check") s.checked = el.checked;
-      else s.name = el.value.trim() || s.name;
+      else if (kind === "csv-price") s.priceChange.checked = el.checked;
+      else if (kind === "csv-name") s.name = el.value.trim() || s.name;
+      else {
+        s.target = el.value;
+        s.checked = true;
+        const scroll = this.shadowRoot.querySelector(".dialog")?.scrollTop || 0;
+        this._render();
+        const dialog = this.shadowRoot.querySelector(".dialog");
+        if (dialog) dialog.scrollTop = scroll;
+        return;
+      }
       const button = this.shadowRoot.querySelector(".csv-submit");
-      const n = this._csvPicked(d).length;
+      const n = this._csvCounts(d);
       button.textContent = this._csvSubmitLabel(n);
       button.disabled = !n;
     } else if (kind === "entities") {
@@ -2661,6 +2935,10 @@ const STYLES = `
   input.csv-name { border: 1px solid transparent; background: transparent; padding: 2px 4px; margin-left: -5px; font: inherit; font-weight: 500; color: var(--primary-text-color); width: 100%; border-radius: 6px; box-sizing: border-box; }
   input.csv-name:hover, input.csv-name:focus { border-color: var(--divider-color); background: var(--card-background-color); }
   .csv-sub { margin: 16px 0 0; }
+  .csv-row-wrap { border-radius: 8px; }
+  .csv-row-wrap > label.csv-price { margin: 0 0 6px 38px; width: calc(100% - 38px); box-sizing: border-box; }
+  select.csv-target { width: auto; field-sizing: content; max-width: calc(100% - 92px); margin: -6px 0 6px 92px; padding: 2px 4px; border: none; background: transparent; color: var(--primary-color); font-size: 12px; cursor: pointer; }
+  label.csv-price { font-size: 13px; }
   label.check.muted { color: var(--secondary-text-color); }
   label.check small { display: block; font-size: 12px; color: var(--secondary-text-color); }
   label.check.option input { margin-top: 3px; }
