@@ -27,6 +27,7 @@ from .engine import (
     salary_periods,
     parse_date,
 )
+from .ledger import FIELDS as LEDGER_FIELDS
 from .store import AccessError, ValidationError
 
 SCOPE_ME = "me"
@@ -55,6 +56,9 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_delete_spending,
         ws_bank_history,
         ws_bank_sync,
+        ws_ledger_rows,
+        ws_ledger_add,
+        ws_ledger_clear,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -409,6 +413,36 @@ async def ws_bank_history(hass, connection, msg, data):
 async def ws_bank_sync(hass, connection, msg, data):
     result = data.book.bank_sync(connection.user.id, msg)
     return (result, True)
+
+
+# --------------------------------------------------------------- statistics
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/ledger/rows"})
+@websocket_api.async_response
+@_handler
+async def ws_ledger_rows(hass, connection, msg, data):
+    return ({"fields": list(LEDGER_FIELDS), "rows": data.ledger.rows(connection.user.id)}, False)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/ledger/add", vol.Required("rows"): list}
+)
+@websocket_api.async_response
+@_handler
+async def ws_ledger_add(hass, connection, msg, data):
+    result = data.ledger.add(connection.user.id, msg["rows"])
+    if result["added"]:
+        await data.async_ledger_changed()
+    return (result, False)
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/ledger/clear"})
+@websocket_api.async_response
+@_handler
+async def ws_ledger_clear(hass, connection, msg, data):
+    removed = data.ledger.clear(connection.user.id)
+    await data.async_ledger_changed()
+    return ({"removed": removed}, False)
 
 
 @websocket_api.websocket_command(

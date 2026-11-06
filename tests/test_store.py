@@ -310,3 +310,22 @@ def test_bank_sync_confirms_spends_remembers_and_skips_duplicates():
     # nothing is applied when one entry is invalid
     with pytest.raises(ValidationError):
         book.bank_sync("anna", {"spendings": [{"item_id": rent, "date": "2026-11-22", "amount": 5}]})
+
+
+def test_ledger_keeps_rows_per_user_and_skips_duplicates():
+    from custom_components.haushaltsbuch.ledger import Ledger
+
+    ledger = Ledger()
+    rows = [
+        {"date": "2026-11-04", "amount": "-74", "name": "Stadtwerke", "main_category": "Lebenshaltung", "category": "Strom", "account": "DE01"},
+        {"date": "2026-10-29", "amount": 2700, "name": "Arbeitgeber", "category": "Gehalt"},
+    ]
+    assert ledger.add("anna", rows) == {"added": 2, "skipped": 0, "total": 2}
+    assert ledger.add("anna", rows) == {"added": 0, "skipped": 2, "total": 2}
+    assert [r[0] for r in ledger.rows("anna")] == ["2026-10-29", "2026-11-04"]
+    assert ledger.rows("ben") == []
+    with pytest.raises(ValidationError):
+        ledger.add("anna", [{"date": "04.11.2026", "amount": 1}])
+    with pytest.raises(ValidationError):
+        ledger.add("anna", [{"date": "2026-11-04", "amount": 0}])
+    assert ledger.clear("anna") == 2 and ledger.rows("anna") == []

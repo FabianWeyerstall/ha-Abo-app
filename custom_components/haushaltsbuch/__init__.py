@@ -36,6 +36,7 @@ from .const import (
     VERSION,
 )
 from .engine import budget_status, contract_reminders, period_finder
+from .ledger import Ledger
 from .store import Book, ValidationError
 from .websocket_api import async_register_websocket_commands
 
@@ -52,16 +53,22 @@ class HaushaltsbuchData:
         self.entry = entry
         self.store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.book = Book()
+        self.ledger_store: Store = Store(hass, 1, f"{DOMAIN}.ledger")
+        self.ledger = Ledger()
         self._entity_households: frozenset[str] = frozenset()
 
     async def async_load(self) -> None:
         self.book = Book(await self.store.async_load())
+        self.ledger = Ledger(await self.ledger_store.async_load())
         self._entity_households = self.entity_households()
 
     def entity_households(self) -> frozenset[str]:
         return frozenset(
             hid for hid, hh in self.book.data["households"].items() if hh.get("entities")
         )
+
+    async def async_ledger_changed(self) -> None:
+        await self.ledger_store.async_save(self.ledger.data)
 
     async def async_changed(self) -> None:
         """Persist and notify entities; reload when the entity set changed."""

@@ -170,6 +170,7 @@ const CSV_COLUMNS = {
   mandate: ["mandatsreferenz", "mandate reference"],
   creditor: ["gläubiger id", "glaeubiger id", "gläubiger-id", "creditor id"],
   account: ["konto", "auftragskonto", "eigenes konto", "account"],
+  main: ["hauptkategorie", "main category"],
   counter: ["nummer", "iban zahlungsbeteiligter", "kontonummer/iban", "iban", "counterparty iban"],
 };
 
@@ -227,7 +228,7 @@ function parseBankCsv(text) {
     if (!date || !Number.isFinite(amount) || amount === 0) continue;
     const account = get("account").replace(/\s/g, "").toUpperCase();
     const counter = get("counter").replace(/\s/g, "").toUpperCase();
-    bookings.push({ date, amount, name: get("name") || get("purpose").slice(0, 40), purpose: get("purpose"), category: get("category"), text: get("text"), mandate: get("mandate"), creditor: get("creditor"), account, counter });
+    bookings.push({ date, amount, name: get("name") || get("purpose").slice(0, 40), purpose: get("purpose"), category: get("category"), main: get("main"), text: get("text"), mandate: get("mandate"), creditor: get("creditor"), account, counter });
   }
   if (!bookings.length) throw new Error(tr("In der Datei wurden keine Umsätze gefunden.", "No transactions were found in the file."));
   return bookings;
@@ -891,6 +892,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._calendar = await this._ws("forecast", { scope, start: iso(first), end: iso(last) });
     } else if (this._view === "months") {
       this._summary = await this._ws("summary", { scope, months: 12 });
+    } else if (this._view === "stats") {
+      this._ledger = await this._ws("ledger/rows");
     } else if (this._view === "dashboard") {
       const [trend, summary] = await Promise.all([
         this._ws("forecast", { scope, start: iso(t), end: iso(addDays(t, 90)) }),
@@ -1106,6 +1109,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ["items", tr("Posten", "Entries"), "mdi:format-list-bulleted"],
       ["months", tr("Monate", "Months"), "mdi:chart-bar"],
       ["dashboard", tr("Übersicht", "Overview"), "mdi:view-dashboard-outline"],
+      ["stats", tr("Statistik", "Statistics"), "mdi:chart-box-outline"],
       ["households", tr("Haushalt", "Household"), "mdi:home-account"],
     ];
     return `<nav class="tabs">${tabs
@@ -1123,12 +1127,141 @@ class HaushaltsbuchPanel extends HTMLElement {
         return this._renderMonths();
       case "dashboard":
         return this._renderDashboard();
+      case "stats":
+        return this._renderStats();
       case "households":
         return this._renderHouseholds();
       default:
         return this._renderBalanceCard() + this._renderTimeline();
     }
   }
+
+// ------------------------------------------------------------ statistics
+
+  _renderStats() {
+    const rows = this._ledger?.rows || [];
+    if (!rows.length) {
+      return `<div class="card empty">${tr("Noch keine Umsätze gespeichert. Importiere unter „Posten“ → „Importieren“ eine oder mehrere CSV-Dateien aus deiner Banking-App und lass „Umsätze für die Statistik speichern“ angehakt.", "No transactions saved yet. Import one or more CSV files from your banking app under “Entries” → “Import” and keep “Save transactions for statistics” ticked.")}</div>`;
+    }
+    const accounts = [...new Set(rows.map((r) => r[5]).filter(Boolean))].sort();
+    const account = accounts.includes(this._statsAccount) ? this._statsAccount : "all";
+    const mine = account === "all" ? rows : rows.filter((r) => r[5] === account);
+    const years = [...new Set(mine.map((r) => r[0].slice(0, 4)))].sort();
+    const year = this._statsYear === "all" || years.includes(this._statsYear) ? this._statsYear : years[years.length - 1];
+    const all = year === "all";
+    const lastDate = mine[mine.length - 1][0];
+    const inYear = (r, y) => r[0].startsWith(y);
+    // A running year is compared with the same part of the year before.
+    const cutoff = !all && year === lastDate.slice(0, 4) ? lastDate.slice(5) : "12-31";
+    const prevYear = String(Number(year) - 1);
+    const period = all ? mine : mine.filter((r) => inYear(r, year));
+    const before = all || !years.includes(prevYear) ? null : mine.filter((r) => inYear(r, prevYear) && r[0].slice(5) <= cutoff);
+    const sums = (list) => list.reduce((s, r) => (r[1] > 0 ? (s.income += r[1]) : (s.expense -= r[1]), s), { income: 0, expense: 0 });
+    const now = sums(period);
+    const was = before && sums(before);
+    const fullYears = years.filter((y) => y !== lastDate.slice(0, 4) && mine.some((r) => r[0] < `${y}-02-01` && r[0] >= `${y}-01-01`));
+    const perYear = all ? Math.max(1, daysBetween(mine[0][0], lastDate) / 365.25) : 1;
+    const change = (a, b) => (b ? Math.round(((a - b) / b) * 100) : null);
+    const delta = (a, b, goodWhenUp) => {
+      const pct = change(a, b);
+      if (pct === null || !Number.isFinite(pct)) return "";
+      const up = pct > 0;
+      const cls = pct === 0 ? "" : up === goodWhenUp ? "pos" : "neg";
+      return `<span class="delta ${cls}">${up ? "+" : ""}${pct} %</span>`;
+    };
+    const label = all ? tr(`Ø pro Jahr seit ${years[0]}`, `avg per year since ${years[0]}`) : cutoff !== "12-31" ? tr(`${year} bis ${shortDay(lastDate)}`, `${year} until ${shortDay(lastDate)}`) : year;
+    const vs = was ? `<div class="hint">${tr(`ggü. ${prevYear}${cutoff !== "12-31" ? ` bis ${shortDay(lastDate)}` : ""}`, `vs ${prevYear}${cutoff !== "12-31" ? ` until ${shortDay(lastDate)}` : ""}`)}</div>` : "";
+    const rest = now.income - now.expense;
+
+    const tiles = `<div class="card">
+      <div class="row-between stats-head">
+        <h3>${tr("Statistik", "Statistics")} · ${esc(label)}</h3>
+        <div class="stats-filters">
+          <select data-change="stats-year" aria-label="${tr("Jahr", "Year")}">
+            <option value="all" ${all ? "selected" : ""}>${tr("Alle Jahre", "All years")}</option>
+            ${[...years].reverse().map((y) => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("")}
+          </select>
+          ${accounts.length > 1 ? `<select data-change="stats-account" aria-label="${tr("Konto", "Account")}">
+            <option value="all">${tr("Alle Konten", "All accounts")}</option>
+            ${accounts.map((a) => `<option value="${esc(a)}" ${a === account ? "selected" : ""}>${tr("Konto", "Account")} …${esc(a.slice(-4))}</option>`).join("")}
+          </select>` : ""}
+        </div>
+      </div>
+      <div class="totals">
+        <div><div class="label">${tr("Eingenommen", "Income")}</div><div class="big pos">${this._money(now.income / perYear)}</div>${was ? delta(now.income, was.income, true) : ""}</div>
+        <div><div class="label">${tr("Ausgegeben", "Spent")}</div><div class="big neg">${this._money(now.expense / perYear)}</div>${was ? delta(now.expense, was.expense, false) : ""}</div>
+        <div><div class="label">${tr("Übrig", "Left over")}</div><div class="big ${rest < 0 ? "neg" : ""}">${this._money(rest / perYear)}</div>${now.income ? `<div class="hint">${tr(`${Math.round((rest / now.income) * 100)} % vom Einkommen`, `${Math.round((rest / now.income) * 100)} % of income`)}</div>` : ""}</div>
+      </div>
+      ${vs}
+      <p class="hint">${tr(`Aus ${mine.length} gespeicherten Umsätzen. Umbuchungen zwischen deinen Konten zählen nicht mit.`, `From ${mine.length} saved transactions. Transfers between your accounts are not counted.`)}</p>
+    </div>`;
+
+    // Over time: years, or the months of the chosen year.
+    const buckets = all ? years.map((y) => [y, y]) : Array.from({ length: 12 }, (_, i) => [`${year}-${String(i + 1).padStart(2, "0")}`, monthName(i, "short")]);
+    const bucketSums = buckets.map(([key, name]) => ({ key, name, ...sums(mine.filter((r) => r[0].startsWith(key))) }));
+    const peak = Math.max(1, ...bucketSums.map((b) => Math.max(b.income, b.expense)));
+    const history = `<div class="card">
+      <h3>${all ? tr("Verlauf pro Jahr", "By year") : tr(`Verlauf ${year}`, `${year} by month`)}</h3>
+      <div class="stats-columns">${bucketSums
+        .map((b) => `<button class="stats-col" ${all ? `data-action="stats-year" data-year="${b.key}"` : "disabled"} title="${esc(b.name)}">
+          <div class="stats-bars"><span class="bar-in" style="height:${(b.income / peak) * 100}%"></span><span class="bar-out" style="height:${(b.expense / peak) * 100}%"></span></div>
+          <span class="stats-col-label">${esc(b.name)}</span></button>`)
+        .join("")}</div>
+      <p class="hint"><span class="legend in"></span>${tr("eingenommen", "income")} <span class="legend out"></span>${tr("ausgegeben", "spent")}${all ? tr(" · Tippe auf ein Jahr für die Monate.", " · Tap a year for its months.") : ""}</p>
+    </div>`;
+
+    // Categories: main category with sub categories and the biggest payees.
+    const group = (list) => {
+      const map = new Map();
+      for (const r of list) {
+        if (r[1] >= 0) continue;
+        const main = r[3] || r[4] || tr("Ohne Kategorie", "Uncategorised");
+        if (!map.has(main)) map.set(main, { name: main, total: 0, subs: new Map(), payees: new Map() });
+        const g = map.get(main);
+        g.total -= r[1];
+        const sub = r[4] || main;
+        g.subs.set(sub, (g.subs.get(sub) || 0) - r[1]);
+        const payee = r[2] || "?";
+        g.payees.set(payee, (g.payees.get(payee) || 0) - r[1]);
+      }
+      return map;
+    };
+    const cats = [...group(period).values()].sort((a, b) => b.total - a.total);
+    const prevCats = before ? group(before) : null;
+    // All years: how a category developed from the first to the last full year.
+    const firstFull = fullYears[0];
+    const lastFull = fullYears[fullYears.length - 1];
+    const trendCats = all && firstFull && lastFull && firstFull !== lastFull ? [group(mine.filter((r) => inYear(r, firstFull))), group(mine.filter((r) => inYear(r, lastFull)))] : null;
+    const top = Math.max(1, ...cats.map((c) => c.total));
+    const categories = `<div class="card">
+      <h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>
+      <p class="hint">${all ? tr(`Durchschnitt pro Jahr${trendCats ? `, daneben ${firstFull} → ${lastFull}` : ""}.`, `Average per year${trendCats ? `, next to it ${firstFull} → ${lastFull}` : ""}.`) : tr("Tippe auf eine Kategorie für Unterkategorien und Empfänger.", "Tap a category for sub categories and payees.")}</p>
+      ${cats
+        .map((c) => {
+          const open = this._statsOpen === c.name;
+          const trend = trendCats ? (() => {
+            const a = trendCats[0].get(c.name)?.total || 0;
+            const b = trendCats[1].get(c.name)?.total || 0;
+            return a && b ? `<span class="stats-trend">${this._moneyPlain(a)} → ${this._moneyPlain(b)} ${delta(b, a, false)}</span>` : "";
+          })() : prevCats ? delta(c.total, prevCats.get(c.name)?.total || 0, false) : "";
+          const list = (map) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, v]) => `<div class="stats-sub"><span>${esc(n)}</span><span>${this._moneyPlain(v / perYear)}</span></div>`).join("");
+          return `<div class="stats-cat ${open ? "open" : ""}">
+            <div class="stats-cat-row" role="button" tabindex="0" data-action="stats-cat" data-cat="${esc(c.name)}">
+              <div class="stats-cat-main"><div class="row-between"><span class="entry-name">${esc(c.name)}</span><span>${this._moneyPlain(c.total / perYear)}</span></div>
+              <div class="bar-line"><span class="bar neg-bar" style="width:${(c.total / top) * 100}%"></span></div></div>
+              <div class="stats-cat-side">${trend}</div>
+            </div>
+            ${open ? `<div class="stats-detail"><div><h4>${tr("Unterkategorien", "Sub categories")}</h4>${list(c.subs)}</div><div><h4>${tr("Größte Empfänger", "Biggest payees")}</h4>${list(c.payees)}</div></div>` : ""}
+          </div>`;
+        })
+        .join("")}
+    </div>`;
+
+    const manage = `<div class="card"><div class="row-between"><p class="hint">${tr(`Gespeichert sind ${rows.length} Umsätze vom ${shortDate(rows[0][0])} bis ${shortDate(lastDate)}, nur in deinem Home Assistant und nur für dich sichtbar.`, `${rows.length} transactions from ${shortDate(rows[0][0])} to ${shortDate(lastDate)} are saved, only in your Home Assistant and only visible to you.`)}</p>
+      <button class="secondary small" data-action="stats-clear">${tr("Alle löschen", "Delete all")}</button></div></div>`;
+    return tiles + history + categories + manage;
+  }
+
 
   _renderBalanceCard() {
     const b = this._scopeBalance();
@@ -2140,6 +2273,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}`)}${d.accounts > 1 ? tr(` auf ${d.accounts} Konten`, ` in ${d.accounts} accounts`) : ""}.
         ${d.transfers ? tr(`${d.transfers} Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${d.transfers} transfers between your accounts are left out.`) : ""}
         ${daysBetween(d.from, d.to) > 760 ? tr("Vorschläge kommen aus den letzten zwei Jahren, die ältere Historie hilft nur bei Jährlichem.", "Suggestions come from the last two years; older history only helps with yearly payments.") : ""}</p>
+      <label class="check csv-ledger"><input type="checkbox" data-change="csv-ledger" ${d.saveLedger ? "checked" : ""}> ${tr(`Alle ${d.count} Umsätze für die Statistik speichern (nur in deinem Home Assistant, schon vorhandene werden übersprungen)`, `Save all ${d.count} transactions for statistics (only in your Home Assistant; existing ones are skipped)`)}</label>
       ${nothing ? `<p class="hint">${tr("Nichts Neues gefunden. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "Nothing new found. For good suggestions the file should cover at least 6 to 12 months.")}</p>` : ""}
       ${section(tr("Passt zu deinen Posten", "Matches your entries"), tr("Gekommene Buchungen werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen im passenden Budget.", "Bookings that arrived are confirmed with their real date and amount; card payments go into the matching budget."), d.matches.map(matchRow).join(""))}
       ${section(tr("Neue regelmäßige Buchungen", "New regular payments"), "", d.suggestions.map(newRow).join(""))}
@@ -2148,7 +2282,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert wird nur, was angehakt ist. Das Haushaltsbuch merkt sich, welche Lastschrift zu welchem Posten gehört, und ordnet sie beim nächsten Import von selbst zu.", "The file is only read here in the browser. Only what is ticked is saved. The Household Budget remembers which direct debit belongs to which entry and assigns it by itself next time.")}</p>
       <div class="dialog-actions"><span></span><div>
         <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
-        <button type="submit" class="csv-submit" ${picked ? "" : "disabled"}>${this._csvSubmitLabel(picked)}</button>
+        <button type="submit" class="csv-submit" ${picked || d.saveLedger ? "" : "disabled"}>${this._csvSubmitLabel(picked, d.saveLedger)}</button>
       </div></div>
     </form>`;
   }
@@ -2161,7 +2295,8 @@ class HaushaltsbuchPanel extends HTMLElement {
     return this._csvAll(d).filter((s) => s.checked).length;
   }
 
-  _csvSubmitLabel(n) {
+  _csvSubmitLabel(n, ledger = false) {
+    if (!n && ledger) return tr("Umsätze speichern", "Save transactions");
     return n === 1 ? tr("1 Vorschlag übernehmen", "Apply 1 suggestion") : tr(`${n} Vorschläge übernehmen`, `Apply ${n} suggestions`);
   }
 
@@ -2189,7 +2324,11 @@ class HaushaltsbuchPanel extends HTMLElement {
       })),
       ...budgets.map((b) => ({ name: b.name, direction: "expense", amount: b.amount, category: b.category, icon: b.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note, bank_keys: [b.bankKey] })),
     ];
-    const result = { added: 0, confirmed: 0, spendings: 0, price_changes: 0 };
+    const result = { added: 0, confirmed: 0, spendings: 0, price_changes: 0, ledger: 0 };
+    if (d.saveLedger) {
+      const rows = d.bookings.map((b) => ({ date: b.date, amount: b.amount, name: tidyName(b.name), main_category: b.main, category: b.category, account: b.account, purpose: b.purpose }));
+      for (let i = 0; i < rows.length; i += 2000) result.ledger += (await this._ws("ledger/add", { rows: rows.slice(i, i + 2000) })).added;
+    }
     if (items.length) result.added = (await this._ws("import", { data: { format: "haushaltsbuch", items }, replace: false })).added;
 
     const sync = { confirmations: [], spendings: [], keys: [], price_changes: [] };
@@ -2283,7 +2422,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     this._error = null;
     const accounts = new Set(bookings.map((b) => b.account).filter(Boolean)).size;
-    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, accounts, transfers: parsed.transfers, ...analysis };
+    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, accounts, transfers: parsed.transfers, bookings, saveLedger: true, ...analysis };
     this._render();
   }
 
@@ -2471,6 +2610,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           r.confirmed && tr(`${r.confirmed} Buchungen abgehakt`, `${r.confirmed} bookings confirmed`),
           r.spendings && tr(`${r.spendings} Budget-Ausgaben eingetragen`, `${r.spendings} budget expenses added`),
           r.price_changes && tr(`${r.price_changes} Preisänderungen`, `${r.price_changes} price changes`),
+          r.ledger && tr(`${r.ledger} Umsätze für die Statistik gespeichert`, `${r.ledger} transactions saved for statistics`),
         ].filter(Boolean);
         setTimeout(() => {
           this._dialog = { type: "notice", title: tr("Abgleich fertig", "Done"), text: parts.length ? `${parts.join(", ")}.` : tr("Es war schon alles da.", "Everything was there already.") };
@@ -2545,12 +2685,20 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._saveSpecialSettings({ special_min_months: Number(el.value) });
     } else if (kind === "special-amount") {
       this._saveSpecialSettings({ special_min_amount: Number(el.value) || 0 });
+    } else if (kind === "stats-year") {
+      this._statsYear = el.value;
+      this._statsOpen = null;
+      this._render();
+    } else if (kind === "stats-account") {
+      this._statsAccount = el.value;
+      this._render();
     } else if (kind === "import-file") {
       this._readImportFile(el);
-    } else if (kind === "csv-check" || kind === "csv-name" || kind === "csv-price" || kind === "csv-target") {
+    } else if (kind === "csv-check" || kind === "csv-name" || kind === "csv-price" || kind === "csv-target" || kind === "csv-ledger") {
       const d = this._dialog;
       const s = this._csvAll(d).find((x) => x.key === el.dataset.key);
-      if (kind === "csv-check") s.checked = el.checked;
+      if (kind === "csv-ledger") d.saveLedger = el.checked;
+      else if (kind === "csv-check") s.checked = el.checked;
       else if (kind === "csv-price") s.priceChange.checked = el.checked;
       else if (kind === "csv-name") s.name = el.value.trim() || s.name;
       else {
@@ -2564,8 +2712,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       }
       const button = this.shadowRoot.querySelector(".csv-submit");
       const n = this._csvCounts(d);
-      button.textContent = this._csvSubmitLabel(n);
-      button.disabled = !n;
+      button.textContent = this._csvSubmitLabel(n, d.saveLedger);
+      button.disabled = !n && !d.saveLedger;
     } else if (kind === "entities") {
       this._run(() => this._ws("household/update", { household_id: el.dataset.id, entities: el.checked }));
     }
@@ -2661,6 +2809,17 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     ev.stopPropagation();
     switch (a) {
+      case "stats-year":
+        this._statsYear = target.dataset.year;
+        this._render();
+        break;
+      case "stats-cat":
+        this._statsOpen = this._statsOpen === target.dataset.cat ? null : target.dataset.cat;
+        this._render();
+        break;
+      case "stats-clear":
+        if (confirm(tr("Alle gespeicherten Umsätze löschen? Deine Posten bleiben.", "Delete all saved transactions? Your entries stay."))) this._run(() => this._ws("ledger/clear"));
+        break;
       case "view":
         this._view = target.dataset.view;
         this._reload();
@@ -3040,6 +3199,36 @@ const STYLES = `
   input.csv-name { border: 1px solid transparent; background: transparent; padding: 2px 4px; margin-left: -5px; font: inherit; font-weight: 500; color: var(--primary-text-color); width: 100%; border-radius: 6px; box-sizing: border-box; }
   input.csv-name:hover, input.csv-name:focus { border-color: var(--divider-color); background: var(--card-background-color); }
   .csv-sub { margin: 16px 0 0; }
+  .stats-head { flex-wrap: wrap; gap: 8px; }
+  .stats-filters { display: flex; gap: 8px; }
+  .stats-filters select { width: auto; padding: 4px 8px; font-size: 14px; }
+  .delta { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); }
+  .delta.pos { color: var(--success-color, #43a047); }
+  .delta.neg { color: var(--error-color, #db4437); }
+  .stats-columns { display: flex; gap: 6px; align-items: flex-end; height: 170px; margin-top: 8px; }
+  .stats-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; background: none; border: none; padding: 0; cursor: pointer; color: var(--secondary-text-color); font: inherit; }
+  .stats-col[disabled] { cursor: default; }
+  .stats-bars { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 2px; }
+  .stats-bars span { width: 40%; max-width: 22px; border-radius: 3px 3px 0 0; min-height: 1px; }
+  .bar-in, .legend.in { background: var(--success-color, #43a047); }
+  .bar-out, .legend.out { background: var(--error-color, #db4437); opacity: 0.8; }
+  .stats-col-label { font-size: 11px; }
+  .legend { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 8px; vertical-align: middle; }
+  .legend.in { margin-left: 0; }
+  .stats-cat { border-top: 1px solid var(--divider-color); }
+  .stats-cat-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; }
+  .stats-cat-main { flex: 1; min-width: 0; }
+  .stats-cat-main .bar-line { margin-top: 4px; }
+  .neg-bar { background: var(--error-color, #db4437); opacity: 0.7; border-radius: 3px; }
+  .stats-cat-side { width: 200px; text-align: right; font-size: 12px; color: var(--secondary-text-color); }
+  .stats-trend { display: block; }
+  .stats-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 4px 12px; }
+  .stats-detail h4 { margin: 0 0 4px; font-size: 13px; color: var(--secondary-text-color); font-weight: 500; }
+  .stats-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; }
+  @media (max-width: 600px) {
+    .stats-cat-side { width: auto; max-width: 40%; }
+    .stats-detail { grid-template-columns: 1fr; }
+  }
   .csv-row-wrap { border-radius: 8px; }
   .csv-row-wrap > label.csv-price { margin: 0 0 6px 38px; width: calc(100% - 38px); box-sizing: border-box; }
   select.csv-target { width: auto; field-sizing: content; max-width: calc(100% - 92px); margin: -6px 0 6px 92px; padding: 2px 4px; border: none; background: transparent; color: var(--primary-color); font-size: 12px; cursor: pointer; }
