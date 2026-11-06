@@ -1325,7 +1325,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     const top = Math.max(1, ...cats.map((c) => c.total));
     const categories = `<div class="card">
       <h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>
-      <p class="hint">${all ? tr(`Durchschnitt pro Jahr${trendCats ? `, daneben ${firstFull} → ${lastFull}` : ""}.`, `Average per year${trendCats ? `, next to it ${firstFull} → ${lastFull}` : ""}.`) : tr("Tippe auf eine Kategorie für Unterkategorien und Empfänger.", "Tap a category for sub categories and payees.")}</p>
+      <p class="hint">${all ? tr(`Durchschnitt pro Jahr${trendCats ? `, daneben ${firstFull} → ${lastFull}` : ""}.`, `Average per year${trendCats ? `, next to it ${firstFull} → ${lastFull}` : ""}.`) : tr("Tippe auf eine Kategorie für Unterkategorien und Empfänger, und darin auf einen Eintrag für die einzelnen Buchungen.", "Tap a category for sub categories and payees, then on an entry for its bookings.")}</p>
       ${cats
         .map((c) => {
           const open = this._statsOpen === c.name;
@@ -1334,14 +1334,32 @@ class HaushaltsbuchPanel extends HTMLElement {
             const b = trendCats[1].get(c.name)?.total || 0;
             return a && b ? `<span class="stats-trend">${this._moneyPlain(a)} → ${this._moneyPlain(b)} ${delta(b, a, false)}</span>` : "";
           })() : prevCats ? delta(c.total, prevCats.get(c.name)?.total || 0, false) : "";
-          const list = (map) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, v]) => `<div class="stats-sub"><span>${esc(n)}</span><span>${this._moneyPlain(v / perYear)}</span></div>`).join("");
+          const pick = open ? this._statsPick : null;
+          const list = (map, kind) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, v]) => {
+            const active = pick?.kind === kind && pick.name === n;
+            return `<button class="stats-sub ${active ? "active" : ""}" data-action="stats-pick" data-kind="${kind}" data-name="${esc(n)}"><span>${esc(n)}</span><span>${this._moneyPlain(v / perYear)}</span></button>`;
+          }).join("");
+          // The bookings behind a tapped sub category or payee.
+          let bookingsList = "";
+          if (pick) {
+            const hits = period
+              .filter((r) => r[1] < 0 && (r[3] || r[4] || tr("Ohne Kategorie", "Uncategorised")) === c.name && (pick.kind === "sub" ? (r[4] || c.name) === pick.name : (r[2] || "?") === pick.name))
+              .sort((a, b) => b[0].localeCompare(a[0]));
+            const shown = hits.slice(0, this._statsMore ? hits.length : 40);
+            const sum = hits.reduce((t, r) => t - r[1], 0);
+            bookingsList = `<div class="stats-bookings">
+              <div class="row-between"><h4>${esc(pick.name)} · ${hits.length === 1 ? tr("1 Buchung", "1 booking") : tr(`${hits.length} Buchungen`, `${hits.length} bookings`)}</h4><span>${this._moneyPlain(sum)}</span></div>
+              <ul>${shown.map((r) => `<li><div class="csv-detail-head"><span>${shortDate(r[0])}</span><b>${this._moneyPlain(r[1])}</b>${pick.kind === "payee" ? (r[4] ? `<span class="what">${esc(r[4])}</span>` : "") : `<span class="what">${esc(r[2] || "")}</span>`}</div>${r[6] ? `<div class="csv-detail-text">${esc(r[6].slice(0, 100))}</div>` : ""}</li>`).join("")}</ul>
+              ${hits.length > shown.length ? `<button class="link" data-action="stats-more">${tr(`alle ${hits.length} anzeigen`, `show all ${hits.length}`)}</button>` : ""}
+            </div>`;
+          }
           return `<div class="stats-cat ${open ? "open" : ""}">
             <div class="stats-cat-row" role="button" tabindex="0" data-action="stats-cat" data-cat="${esc(c.name)}">
               <div class="stats-cat-main"><div class="row-between"><span class="entry-name">${esc(c.name)}</span><span>${this._moneyPlain(c.total / perYear)}</span></div>
               <div class="bar-line"><span class="bar neg-bar" style="width:${(c.total / top) * 100}%"></span></div></div>
               <div class="stats-cat-side">${trend}</div>
             </div>
-            ${open ? `<div class="stats-detail"><div><h4>${tr("Unterkategorien", "Sub categories")}</h4>${list(c.subs)}</div><div><h4>${tr("Größte Empfänger", "Biggest payees")}</h4>${list(c.payees)}</div></div>` : ""}
+            ${open ? `<div class="stats-detail"><div><h4>${tr("Unterkategorien", "Sub categories")}</h4>${list(c.subs, "sub")}</div><div><h4>${tr("Größte Empfänger", "Biggest payees")}</h4>${list(c.payees, "payee")}</div></div>${bookingsList}` : ""}
           </div>`;
         })
         .join("")}
@@ -2930,6 +2948,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     } else if (kind === "stats-year") {
       this._statsYear = el.value;
       this._statsOpen = null;
+      this._statsPick = null;
       this._render();
     } else if (kind === "stats-account") {
       this._statsAccount = el.value;
@@ -3086,6 +3105,18 @@ class HaushaltsbuchPanel extends HTMLElement {
         break;
       case "stats-cat":
         this._statsOpen = this._statsOpen === target.dataset.cat ? null : target.dataset.cat;
+        this._statsPick = null;
+        this._render();
+        break;
+      case "stats-pick": {
+        const same = this._statsPick?.kind === target.dataset.kind && this._statsPick?.name === target.dataset.name;
+        this._statsPick = same ? null : { kind: target.dataset.kind, name: target.dataset.name };
+        this._statsMore = false;
+        this._render();
+        break;
+      }
+      case "stats-more":
+        this._statsMore = true;
         this._render();
         break;
       case "stats-clear":
@@ -3499,7 +3530,15 @@ const STYLES = `
   .stats-trend { display: block; }
   .stats-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 4px 12px; }
   .stats-detail h4 { margin: 0 0 4px; font-size: 13px; color: var(--secondary-text-color); font-weight: 500; }
-  .stats-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; }
+  .stats-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 4px; margin: 0 -4px; width: calc(100% + 8px); background: none; border: none; border-radius: 4px; color: inherit; font-family: inherit; text-align: left; cursor: pointer; }
+  .stats-sub:hover { background: var(--secondary-background-color); }
+  .stats-sub.active { background: var(--secondary-background-color); color: var(--primary-color); }
+  .stats-bookings { padding: 0 4px 12px; font-size: 12px; color: var(--secondary-text-color); }
+  .stats-bookings h4 { margin: 0; font-size: 13px; color: var(--primary-text-color); font-weight: 500; }
+  .stats-bookings ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .stats-bookings li { padding: 4px 0; border-top: 1px solid var(--divider-color); }
+  .stats-bookings .csv-detail-head .what { margin-left: auto; color: var(--secondary-text-color); }
+  button.link { background: none; border: none; padding: 4px 0; color: var(--primary-color); cursor: pointer; font: inherit; }
   @media (max-width: 600px) {
     .stats-cat-side { width: auto; max-width: 40%; }
     .stats-detail { grid-template-columns: 1fr; }
