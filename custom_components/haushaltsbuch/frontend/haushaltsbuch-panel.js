@@ -1429,7 +1429,10 @@ class HaushaltsbuchPanel extends HTMLElement {
         : `<path d="M${p(s0, R)} A${R},${R} 0 ${large} 1 ${p(s1, R)} L${p(s1, r0)} A${r0},${r0} 0 ${large} 0 ${p(s0, r0)} Z" fill="${s.other ? "var(--viz-other)" : colorOf.get(s.name)}"/>`;
       a0 = a1;
     }
-    ring += `<text x="66" y="61" text-anchor="middle" class="st-ring-l">${all ? tr("Ø JAHR", "AVG YEAR") : tr("GESAMT", "TOTAL")}</text><text x="66" y="79" text-anchor="middle" class="st-ring-v">${esc(compact.format(totalOut / perYear))} ${esc(this._state.currency === "EUR" ? "€" : this._state.currency)}</text>`;
+    // Whole euros keep the centre readable; long sums get a smaller font so they stay inside the ring.
+    const ringText = `${new Intl.NumberFormat(this._numberLocale(), { maximumFractionDigits: 0 }).format(totalOut / perYear)} ${this._state.currency === "EUR" ? "€" : this._state.currency}`;
+    const ringSize = ringText.length > 10 ? 11 : ringText.length > 8 ? 13 : 15;
+    ring += `<text x="66" y="61" text-anchor="middle" class="st-ring-l">${all ? tr("Ø JAHR", "AVG YEAR") : tr("GESAMT", "TOTAL")}</text><text x="66" y="79" text-anchor="middle" class="st-ring-v" style="font-size:${ringSize}px">${esc(ringText)}</text>`;
     const catRows = cats.map((c) => {
       const open = this._statsOpen === c.name;
       let side = "";
@@ -4172,7 +4175,7 @@ const STYLES = `
   .st-cats { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .st-cat { border-top: 1px solid var(--divider-color); }
   .st-cat:first-child { border-top: none; }
-  .st-cat-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 64px; gap: 10px; align-items: center; padding: 8px 0; width: 100%; background: none; border: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .st-cat-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 0; width: 100%; background: none; border: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
   .st-cat.open .st-cat-n { color: var(--primary-color); }
   .st-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
   .st-cat-n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4180,6 +4183,10 @@ const STYLES = `
   .st-cat-d { text-align: right; }
   .st-cat-d .badge { padding: 1px 6px; font-size: 11px; }
   .st-cat .stats-detail { grid-template-columns: 1fr; gap: 8px; padding: 0 0 10px 20px; }
+  .st-cat .stats-sub { margin: 0; width: 100%; padding: 3px 0; min-width: 0; }
+  .st-cat .stats-sub span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-cat .stats-sub span:last-child { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .st-cat .stats-detail > div { min-width: 0; }
   .st-cat .stats-bookings { padding: 0 0 12px 20px; }
   @media (max-width: 600px) { .st-donut { flex-direction: column; align-items: stretch; } .st-donut > svg { align-self: center; width: 150px; height: 150px; flex: none; } .st-big { font-size: 34px; } }
   .st-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
