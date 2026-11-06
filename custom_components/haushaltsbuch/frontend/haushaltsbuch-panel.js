@@ -508,31 +508,77 @@ function analyzeBank(bookings, items, history, entries) {
     entry.total += -b.amount;
     entry.list.push(b);
   }
+  // Which budget? A remembered bank category, or a word of the budget's name in
+  // the bank category ("Tanken" ↔ "Tankstelle"), payee or purpose. The category
+  // alone only counts for a budget named like it ("Auto" takes all car costs,
+  // "Tanken" in category Auto does not take the workshop).
+  const stems = (text) => wordsOf(text).map((w) => w.slice(0, Math.max(4, w.length - 2)));
+  const budgetStems = budgetItems.map((i) => ({ item: i, stems: stems(i.name) }));
+  const stemHit = (text, list) => {
+    const words = wordsOf(text);
+    return list.some((st) => words.some((w) => w.startsWith(st)));
+  };
+  const assigned = new Map();
+  const assign = (budget, b, learnKey) => {
+    if (!assigned.has(budget.id)) assigned.set(budget.id, { budget, list: [], keys: new Set() });
+    const entry = assigned.get(budget.id);
+    entry.list.push(b);
+    if (learnKey) entry.keys.add(learnKey);
+  };
+  for (const c of [...byCategory.values()]) {
+    const remembered = keyOwner.get(`c:${c.name}`);
+    const byBankCategory = remembered?.schedule?.frequency === "budget" ? remembered : budgetStems.find((x) => stemHit(c.name, x.stems))?.item;
+    const rest = [];
+    for (const b of c.list) {
+      if (byBankCategory) { assign(byBankCategory, b, `c:${c.name}`); continue; }
+      const byText = budgetStems.find((x) => stemHit(`${b.name} ${b.purpose}`, x.stems))?.item;
+      const sameCategory = budgetItems.filter((i) => i.category === c.category);
+      const generic = sameCategory.length === 1 && sameCategory[0].name.toLowerCase() === sameCategory[0].category.toLowerCase() ? sameCategory[0] : null;
+      if (byText || generic) assign(byText || generic, b, null);
+      else rest.push(b);
+    }
+    c.list = rest;
+    c.total = rest.reduce((t, b) => t - b.amount, 0);
+  }
   const budgetMatches = [];
+  for (const { budget, list, keys } of assigned.values()) {
+    // Entered by hand already? Same amount within two days counts as the same purchase.
+    const known = (history[budget.id]?.spendings || []).map(([date, amount]) => ({ date, amount, taken: false }));
+    const fresh = list.filter((b) => {
+      if (b.date < budget.start_date) return false;
+      const twin = known.find((k) => !k.taken && Math.abs(k.amount - Math.abs(b.amount)) < 0.005 && Math.abs(daysBetween(k.date, b.date)) <= 2);
+      if (twin) twin.taken = true;
+      return !twin;
+    }).sort((x, y) => y.date.localeCompare(x.date));
+    if (!fresh.length) continue;
+    budgetMatches.push({
+      key: `s:${budget.id}`,
+      item: budget,
+      bankKeys: [...keys],
+      remembered: [...keys].every((k) => keyOwner.get(k) === budget),
+      spendings: fresh.map((b) => ({ target: budget.id, date: b.date, amount: Math.abs(b.amount), note: tidyName(b.name), category: csvCategory(b).category })),
+      bookings: fresh,
+      checked: true,
+    });
+  }
+  // Recent payments that fit no budget can still be assigned by hand.
+  const earliest = budgetItems.reduce((m, i) => (i.start_date < m ? i.start_date : m), "9999");
+  const loose = [...byCategory.values()].flatMap((c) => c.list).filter((b) => b.date >= earliest).sort((x, y) => y.date.localeCompare(x.date));
+  if (loose.length) {
+    budgetMatches.push({
+      key: "s:rest",
+      rest: true,
+      item: { id: "rest", name: tr("Weitere Zahlungen", "Other payments"), icon: "mdi:help-circle-outline" },
+      bankKeys: [],
+      remembered: true,
+      spendings: loose.map((b) => ({ target: "skip", date: b.date, amount: Math.abs(b.amount), note: tidyName(b.name), category: csvCategory(b).category })),
+      bookings: loose,
+      checked: true,
+    });
+  }
   const budgets = [];
   for (const c of byCategory.values()) {
-    const budget = keyOwner.get(`c:${c.name}`) || budgetItems.find((i) => i.category === c.category || i.name.toLowerCase() === c.name.toLowerCase());
-    if (budget) {
-      // Entered by hand already? Same amount within two days counts as the same purchase.
-      const known = (history[budget.id]?.spendings || []).map(([date, amount]) => ({ date, amount, taken: false }));
-      const fresh = c.list.filter((b) => {
-        if (b.date < budget.start_date) return false;
-        const twin = known.find((k) => !k.taken && Math.abs(k.amount - Math.abs(b.amount)) < 0.005 && Math.abs(daysBetween(k.date, b.date)) <= 2);
-        if (twin) twin.taken = true;
-        return !twin;
-      });
-      if (fresh.length) {
-        budgetMatches.push({
-          key: `s:${budget.id}`,
-          item: budget,
-          bankKey: `c:${c.name}`,
-          spendings: fresh.map((b) => ({ item_id: budget.id, date: b.date, amount: Math.abs(b.amount), note: tidyName(b.name) })),
-          bookings: fresh,
-          total: fresh.reduce((a, b) => a - b.amount, 0),
-          checked: true,
-        });
-      }
-    } else if (c.list.length >= months * 2 && c.category !== tr("Sonstiges", "Other")) {
+    if (c.list.length && c.list.length >= months * 2 && c.category !== tr("Sonstiges", "Other")) {
       budgets.push({ key: `b:${c.name}`, name: c.name, category: c.category, icon: c.icon, amount: Math.ceil(c.total / months / 10) * 10, count: c.list.length, bankKey: `c:${c.name}`, cardPayments: c.list, checked: false });
     }
   }
@@ -2323,23 +2369,37 @@ class HaushaltsbuchPanel extends HTMLElement {
       const budget = Boolean(m.spendings);
       const list = [...(m.bookings || [])].sort((x, y) => y.date.localeCompare(x.date));
       const last = list[0];
-      const meta = budget
-        ? tr(`${count(m.spendings.length, "1 Kartenzahlung", "# Kartenzahlungen")} als Ausgabe eintragen`, `add ${count(m.spendings.length, "1 card payment", "# card payments")} as expenses`)
+      const here = budget ? m.spendings.filter((p) => p.target === (m.rest ? "skip" : m.item.id)) : [];
+      const elsewhere = budget ? m.spendings.length - here.length : 0;
+      const meta = m.rest
+        ? tr(`${count(m.spendings.length, "1 Zahlung", "# Zahlungen")} · ${m.spendings.length - elsewhere} nicht eingetragen`, `${count(m.spendings.length, "1 payment", "# payments")} · ${m.spendings.length - elsewhere} not added`)
+        : budget
+        ? tr(`${count(here.length, "1 Zahlung", "# Zahlungen")} hier eintragen${elsewhere ? ` · ${elsewhere} anders zugeordnet` : ""}`, `add ${count(here.length, "1 payment", "# payments")} here${elsewhere ? ` · ${elsewhere} assigned elsewhere` : ""}`)
         : m.confirmations.length
           ? tr(`${count(m.confirmations.length, "1 Termin", "# Termine")} abhaken`, `confirm ${count(m.confirmations.length, "1 date", "# dates")}`)
           : tr("nichts Offenes abzuhaken, nur die Zuordnung wird gemerkt", "nothing open to confirm, only the assignment is remembered");
-      const learn = m.remembered ? "" : `<span class="chip shared">${tr("neu erkannt, wird gemerkt", "newly recognised, will be remembered")}</span>`;
+      const learn = m.remembered || (budget && !m.bankKeys.length) ? "" : `<span class="chip shared">${tr("neu erkannt, wird gemerkt", "newly recognised, will be remembered")}</span>`;
       const price = m.priceChange
         ? `<label class="check csv-price">${check({ key: m.key, checked: m.priceChange.checked }, "csv-price")} ${tr(`Neuer Preis ab ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} statt ${this._moneyPlain(m.priceChange.before)}`, `New price from ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} instead of ${this._moneyPlain(m.priceChange.before)}`)}</label>`
         : "";
       const itemAmount = Number(m.item.current_amount ?? m.item.amount) || 0;
-      const yours = budget
+      const yours = m.rest
+        ? tr("Passen zu keinem Budget und zählen nur in der Statistik. Du kannst sie unten einem Budget oder einem einmaligen Posten zuordnen.", "Fit no budget and only count in the statistics. Below you can assign them to a budget or a one-off entry.")
+        : budget
         ? tr(`Dein Budget: ${this._moneyPlain(itemAmount)} pro Monat`, `Your budget: ${this._moneyPlain(itemAmount)} per month`)
         : tr(`Dein Posten: ${this._moneyPlain(itemAmount)} · ${esc(scheduleLabel(m.item))}`, `Your entry: ${this._moneyPlain(itemAmount)} · ${esc(scheduleLabel(m.item))}`);
       const bank = last
         ? tr(`Bank: „${esc(tidyName(last.name))}“ · ${count(list.length, "1 Buchung", "# Buchungen")} · zuletzt ${shortDate(last.date)} ${this._moneyPlain(Math.abs(last.amount))}`, `Bank: “${esc(tidyName(last.name))}” · ${count(list.length, "1 booking", "# bookings")} · last ${shortDate(last.date)} ${this._moneyPlain(Math.abs(last.amount))}`)
         : "";
       const confirmedOn = new Map((m.confirmations || []).map((c) => [`${c.actual_date}|${c.actual_amount}`, c.due_date]));
+      const budgetOptions = d.items.filter((i) => i.schedule?.frequency === "budget");
+      const spendLine = (p, index) => `<li><div class="csv-detail-head"><span>${shortDate(p.date)}</span><b>${this._moneyPlain(-p.amount)}</b>
+          <select class="csv-spend" data-change="csv-spend" data-key="${esc(m.key)}" data-index="${index}" aria-label="${tr("Zuordnen", "Assign")}">
+            ${budgetOptions.map((i) => `<option value="${esc(i.id)}" ${p.target === i.id ? "selected" : ""}>${tr("Budget", "Budget")} ${esc(i.name)}</option>`).join("")}
+            <option value="once" ${p.target === "once" ? "selected" : ""}>${tr("einmaliger Posten", "one-off entry")}</option>
+            <option value="skip" ${p.target === "skip" ? "selected" : ""}>${tr("nicht eintragen", "don't add")}</option>
+          </select></div>
+          <div class="csv-detail-text">${esc(p.note)}${m.bookings[index]?.purpose ? ` · ${esc(m.bookings[index].purpose.slice(0, 80))}` : ""}</div></li>`;
       const line = (b) => {
         const due = confirmedOn.get(`${b.date}|${Math.abs(b.amount)}`);
         const what = budget
@@ -2353,7 +2413,9 @@ class HaushaltsbuchPanel extends HTMLElement {
           <div class="csv-detail-text">${esc(tidyName(b.name))}${b.purpose ? ` · ${esc(b.purpose.slice(0, 80))}` : ""}</div></li>`;
       };
       const shown = list.slice(0, 6);
-      const details = list.length
+      const details = budget
+        ? `<details class="csv-detail" data-key="${esc(m.key)}" ${m.open ? "open" : ""}><summary>${tr("Zahlungen ansehen und zuordnen", "Show and assign payments")}</summary><ul>${m.spendings.map(spendLine).join("")}</ul></details>`
+        : list.length
         ? `<details class="csv-detail"><summary>${tr("Buchungen ansehen", "Show bookings")}</summary><ul>${shown.map(line).join("")}</ul>${list.length > shown.length ? `<div class="csv-detail-more">${tr(`und ${list.length - shown.length} ältere`, `and ${list.length - shown.length} older`)}</div>` : ""}</details>`
         : "";
       return `<div class="csv-row-wrap"><label class="csv-row">
@@ -2365,7 +2427,7 @@ class HaushaltsbuchPanel extends HTMLElement {
             ${bank && !budget ? `<div class="entry-meta plain">${bank}</div>` : ""}
             <div class="entry-meta">${meta} ${learn}</div>
           </div>
-          ${budget ? amount(m.spendings.reduce((a, x) => a + x.amount, 0), "expense") : ""}
+          ${budget && !m.rest ? amount(here.reduce((a, x) => a + x.amount, 0), "expense") : ""}
         </label>${price}${details}</div>`;
     };
 
@@ -2417,7 +2479,8 @@ class HaushaltsbuchPanel extends HTMLElement {
         ${daysBetween(d.from, d.to) > 760 ? tr("Vorschläge kommen aus den letzten zwei Jahren, die ältere Historie hilft nur bei Jährlichem.", "Suggestions come from the last two years; older history only helps with yearly payments.") : ""}</p>
       <label class="check csv-ledger"><input type="checkbox" data-change="csv-ledger" ${d.saveLedger ? "checked" : ""}> ${tr(`Alle ${d.count} Umsätze für die Statistik speichern (nur in deinem Home Assistant, schon vorhandene werden übersprungen)`, `Save all ${d.count} transactions for statistics (only in your Home Assistant; existing ones are skipped)`)}</label>
       ${nothing ? `<p class="hint">${tr("Nichts Neues gefunden. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "Nothing new found. For good suggestions the file should cover at least 6 to 12 months.")}</p>` : ""}
-      ${section(tr("Passt zu deinen Posten", "Matches your entries"), tr("Gekommene Buchungen werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen im passenden Budget.", "Bookings that arrived are confirmed with their real date and amount; card payments go into the matching budget."), d.matches.map(matchRow).join(""))}
+      ${section(tr("Passt zu deinen Posten", "Matches your entries"), tr("Gekommene Buchungen werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen im passenden Budget.", "Bookings that arrived are confirmed with their real date and amount; card payments go into the matching budget."), d.matches.filter((m) => !m.rest).map(matchRow).join(""))}
+      ${section(tr("Ohne Budget", "Without a budget"), "", d.matches.filter((m) => m.rest).map(matchRow).join(""))}
       ${section(tr("Neue regelmäßige Buchungen", "New regular payments"), "", d.suggestions.map(newRow).join(""))}
       ${section(tr("Selten oder unregelmäßig", "Rare or irregular"), tr("Nur einmal gesehen oder ohne festen Abstand. Gleitende Posten lernen den Abstand weiter, sobald du Termine bestätigst.", "Seen only once or without a fixed gap. Rolling entries keep learning the gap as you confirm dates."), d.others.map(newRow).join(""))}
       ${section(tr("Als Budget anlegen?", "Create as a budget?"), tr("Viele unregelmäßige Ausgaben derselben Kategorie. Die Kartenzahlungen dieses Monats werden gleich eingetragen.", "Many irregular expenses of the same category. This month's card payments are added right away."), d.budgets.map(budgetRow).join(""))}
@@ -2434,7 +2497,7 @@ class HaushaltsbuchPanel extends HTMLElement {
   }
 
   _csvCounts(d) {
-    return this._csvAll(d).filter((s) => s.checked).length;
+    return this._csvAll(d).filter((s) => s.checked && !(s.rest && s.spendings.every((p) => p.target === "skip"))).length;
   }
 
   _csvSubmitLabel(n, ledger = false) {
@@ -2464,6 +2527,18 @@ class HaushaltsbuchPanel extends HTMLElement {
         bank_keys: [s.bankKey],
         confirmations: [{ due_date: s.due, status: "booked", actual_date: s.last, actual_amount: s.amount }],
       })),
+      // Single card payments taken out of a budget as a one-off entry (e.g. car service).
+      ...d.matches.filter((m) => m.checked && m.spendings).flatMap((m) => m.spendings.filter((p) => p.target === "once")).map((p) => ({
+        name: p.note,
+        direction: "expense",
+        amount: p.amount,
+        category: p.category,
+        icon: "mdi:receipt-text",
+        start_date: p.date,
+        schedule: { frequency: "once", interval: 1 },
+        note,
+        confirmations: [{ due_date: p.date, status: "booked", actual_date: p.date, actual_amount: p.amount }],
+      })),
       ...budgets.map((b) => ({ name: b.name, direction: "expense", amount: b.amount, category: b.category, icon: b.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note, bank_keys: [b.bankKey] })),
     ];
     // Safety net: everything can be put back under Household → Backups.
@@ -2477,8 +2552,12 @@ class HaushaltsbuchPanel extends HTMLElement {
 
     const sync = { confirmations: [], spendings: [], keys: [], price_changes: [] };
     for (const m of d.matches.filter((x) => x.checked)) {
-      if (m.spendings) sync.spendings.push(...m.spendings);
-      else sync.confirmations.push(...m.confirmations);
+      if (m.spendings) {
+        for (const p of m.spendings) if (p.target !== "skip" && p.target !== "once") sync.spendings.push({ item_id: p.target, date: p.date, amount: p.amount, note: p.note });
+        for (const key of m.bankKeys) sync.keys.push({ item_id: m.item.id, key });
+        continue;
+      }
+      sync.confirmations.push(...m.confirmations);
       if (!m.remembered) sync.keys.push({ item_id: m.item.id, key: m.bankKey });
     }
     for (const m of d.matches) if (m.priceChange?.checked) sync.price_changes.push({ item_id: m.item.id, from: m.priceChange.from, amount: m.priceChange.amount });
@@ -2857,6 +2936,16 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._render();
     } else if (kind === "import-file") {
       this._readImportFile(el);
+    } else if (kind === "csv-spend") {
+      const d = this._dialog;
+      const m = d.matches.find((x) => x.key === el.dataset.key);
+      m.spendings[Number(el.dataset.index)].target = el.value;
+      m.checked = true;
+      m.open = true;
+      const scroll = this.shadowRoot.querySelector(".dialog")?.scrollTop || 0;
+      this._render();
+      const dialog = this.shadowRoot.querySelector(".dialog");
+      if (dialog) dialog.scrollTop = scroll;
     } else if (kind === "csv-check" || kind === "csv-name" || kind === "csv-price" || kind === "csv-target" || kind === "csv-ledger") {
       const d = this._dialog;
       const s = this._csvAll(d).find((x) => x.key === el.dataset.key);
@@ -3427,6 +3516,7 @@ const STYLES = `
   .csv-detail-head { display: flex; gap: 8px; align-items: baseline; color: var(--primary-text-color); }
   .csv-detail-head .what { margin-left: auto; color: var(--secondary-text-color); }
   .csv-detail-text { overflow-wrap: anywhere; }
+  select.csv-spend { margin-left: auto; width: auto; field-sizing: content; max-width: 55%; padding: 0 2px; border: none; background: transparent; color: var(--primary-color); font-size: 12px; cursor: pointer; }
   .csv-detail-more { padding-top: 4px; }
   label.check.muted { color: var(--secondary-text-color); }
   label.check small { display: block; font-size: 12px; color: var(--secondary-text-color); }
