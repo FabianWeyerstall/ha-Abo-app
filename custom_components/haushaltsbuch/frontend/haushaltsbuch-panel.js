@@ -1244,8 +1244,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     // A running year is compared with the same part of the year before.
     const cutoff = !all && year === lastDate.slice(0, 4) ? lastDate.slice(5) : "12-31";
     const prevYear = String(Number(year) - 1);
-    const period = all ? mine : mine.filter((r) => inYear(r, year));
-    const before = all || !years.includes(prevYear) ? null : mine.filter((r) => inYear(r, prevYear) && r[0].slice(5) <= cutoff);
+    // A tapped month narrows the whole page to that month.
+    const month = !all && this._statsMonth?.startsWith(`${year}-`) ? this._statsMonth : null;
+    const period = all ? mine : mine.filter((r) => (month ? r[0].startsWith(month) : inYear(r, year)));
+    const before = all || !years.includes(prevYear) ? null : month ? mine.filter((r) => r[0].startsWith(`${prevYear}-${month.slice(5)}`)) : mine.filter((r) => inYear(r, prevYear) && r[0].slice(5) <= cutoff);
     const sums = (list) => list.reduce((s, r) => (r[1] > 0 ? (s.income += r[1]) : (s.expense -= r[1]), s), { income: 0, expense: 0 });
     const now = sums(period);
     const was = before && sums(before);
@@ -1259,8 +1261,9 @@ class HaushaltsbuchPanel extends HTMLElement {
       const cls = pct === 0 ? "" : up === goodWhenUp ? "pos" : "neg";
       return `<span class="delta ${cls}">${up ? "+" : ""}${pct} %</span>`;
     };
-    const label = all ? tr(`Ø pro Jahr seit ${years[0]}`, `avg per year since ${years[0]}`) : cutoff !== "12-31" ? tr(`${year} bis ${shortDay(lastDate)}`, `${year} until ${shortDay(lastDate)}`) : year;
-    const vs = was ? `<div class="hint">${tr(`ggü. ${prevYear}${cutoff !== "12-31" ? ` bis ${shortDay(lastDate)}` : ""}`, `vs ${prevYear}${cutoff !== "12-31" ? ` until ${shortDay(lastDate)}` : ""}`)}</div>` : "";
+    const monthLabel = month ? `${monthName(Number(month.slice(5)) - 1)} ${year}` : "";
+    const label = month ? monthLabel : all ? tr(`Ø pro Jahr seit ${years[0]}`, `avg per year since ${years[0]}`) : cutoff !== "12-31" ? tr(`${year} bis ${shortDay(lastDate)}`, `${year} until ${shortDay(lastDate)}`) : year;
+    const vs = was && month ? `<div class="hint">${tr(`ggü. ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`, `vs ${monthName(Number(month.slice(5)) - 1)} ${prevYear}`)}</div>` : was ? `<div class="hint">${tr(`ggü. ${prevYear}${cutoff !== "12-31" ? ` bis ${shortDay(lastDate)}` : ""}`, `vs ${prevYear}${cutoff !== "12-31" ? ` until ${shortDay(lastDate)}` : ""}`)}</div>` : "";
     const rest = now.income - now.expense;
 
     const tiles = `<div class="card">
@@ -1293,11 +1296,11 @@ class HaushaltsbuchPanel extends HTMLElement {
     const history = `<div class="card">
       <h3>${all ? tr("Verlauf pro Jahr", "By year") : tr(`Verlauf ${year}`, `${year} by month`)}</h3>
       <div class="stats-columns">${bucketSums
-        .map((b) => `<button class="stats-col" ${all ? `data-action="stats-year" data-year="${b.key}"` : "disabled"} title="${esc(b.name)}">
+        .map((b) => `<button class="stats-col ${b.key === month ? "active" : ""} ${month && b.key !== month ? "dim" : ""}" ${all ? `data-action="stats-year" data-year="${b.key}"` : b.income || b.expense ? `data-action="stats-month" data-month="${b.key}"` : "disabled"} title="${esc(b.name)}">
           <div class="stats-bars"><span class="bar-in" style="height:${(b.income / peak) * 100}%"></span><span class="bar-out" style="height:${(b.expense / peak) * 100}%"></span></div>
           <span class="stats-col-label">${esc(b.name)}</span></button>`)
         .join("")}</div>
-      <p class="hint"><span class="legend in"></span>${tr("eingenommen", "income")} <span class="legend out"></span>${tr("ausgegeben", "spent")}${all ? tr(" · Tippe auf ein Jahr für die Monate.", " · Tap a year for its months.") : ""}</p>
+      <p class="hint"><span class="legend in"></span>${tr("eingenommen", "income")} <span class="legend out"></span>${tr("ausgegeben", "spent")}${all ? tr(" · Tippe auf ein Jahr für die Monate.", " · Tap a year for its months.") : month ? tr(" · Monat nochmal antippen zeigt wieder das ganze Jahr.", " · Tap the month again for the whole year.") : tr(" · Tippe auf einen Monat für seine Umsätze.", " · Tap a month for its transactions.")}</p>
     </div>`;
 
     // Categories: main category with sub categories and the biggest payees.
@@ -1323,8 +1326,19 @@ class HaushaltsbuchPanel extends HTMLElement {
     const lastFull = fullYears[fullYears.length - 1];
     const trendCats = all && firstFull && lastFull && firstFull !== lastFull ? [group(mine.filter((r) => inYear(r, firstFull))), group(mine.filter((r) => inYear(r, lastFull)))] : null;
     const top = Math.max(1, ...cats.map((c) => c.total));
-    const categories = `<div class="card">
-      <h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>
+    const mode = month ? this._statsMode || "list" : "cats";
+    const toggle = month ? `<div class="segmented" role="tablist">
+        <button class="${mode === "list" ? "active" : ""}" data-action="stats-mode" data-mode="list">${tr("Umsätze", "Transactions")}</button>
+        <button class="${mode === "cats" ? "active" : ""}" data-action="stats-mode" data-mode="cats">${tr("Nach Kategorie", "By category")}</button>
+      </div>` : "";
+    const monthList = month && mode === "list" ? `<div class="card">
+      <div class="row-between stats-head"><h3>${tr(`Umsätze ${monthLabel}`, `Transactions ${monthLabel}`)}</h3>${toggle}</div>
+      <ul class="stats-month">${[...period].sort((a, b) => b[0].localeCompare(a[0]) || a[1] - b[1]).map((r) => `<li>
+        <div class="csv-detail-head"><span>${shortDate(r[0])}</span><span class="entry-name">${esc(r[2] || "?")}</span><b class="${r[1] > 0 ? "pos" : ""}">${this._moneyPlain(r[1])}</b></div>
+        <div class="csv-detail-text">${esc([r[4] || r[3], r[6]?.slice(0, 90)].filter(Boolean).join(" · "))}</div></li>`).join("")}</ul>
+    </div>` : "";
+    const categories = monthList || `<div class="card">
+      ${month ? `<div class="row-between stats-head"><h3>${tr(`Ausgaben ${monthLabel}`, `Spending ${monthLabel}`)}</h3>${toggle}</div>` : `<h3>${tr("Ausgaben nach Kategorie", "Spending by category")}</h3>`}
       <p class="hint">${all ? tr(`Durchschnitt pro Jahr${trendCats ? `, daneben ${firstFull} → ${lastFull}` : ""}.`, `Average per year${trendCats ? `, next to it ${firstFull} → ${lastFull}` : ""}.`) : tr("Tippe auf eine Kategorie für Unterkategorien und Empfänger, und darin auf einen Eintrag für die einzelnen Buchungen.", "Tap a category for sub categories and payees, then on an entry for its bookings.")}</p>
       ${cats
         .map((c) => {
@@ -3103,6 +3117,16 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._statsYear = target.dataset.year;
         this._render();
         break;
+      case "stats-month":
+        this._statsMonth = this._statsMonth === target.dataset.month ? null : target.dataset.month;
+        this._statsOpen = null;
+        this._statsPick = null;
+        this._render();
+        break;
+      case "stats-mode":
+        this._statsMode = target.dataset.mode;
+        this._render();
+        break;
       case "stats-cat":
         this._statsOpen = this._statsOpen === target.dataset.cat ? null : target.dataset.cat;
         this._statsPick = null;
@@ -3514,6 +3538,12 @@ const STYLES = `
   .stats-columns { display: flex; gap: 6px; align-items: flex-end; height: 170px; margin-top: 8px; }
   .stats-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; background: none; border: none; padding: 0; cursor: pointer; color: var(--secondary-text-color); font: inherit; }
   .stats-col[disabled] { cursor: default; }
+  .stats-col.dim { opacity: 0.4; }
+  .stats-col.active .stats-col-label { color: var(--primary-color); font-weight: 600; }
+  .stats-month { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--secondary-text-color); }
+  .stats-month li { padding: 6px 0; border-top: 1px solid var(--divider-color); }
+  .stats-month .csv-detail-head .entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .stats-month b.pos { color: var(--success-color, #43a047); }
   .stats-bars { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 2px; }
   .stats-bars span { width: 40%; max-width: 22px; border-radius: 3px 3px 0 0; min-height: 1px; }
   .bar-in, .legend.in { background: var(--success-color, #43a047); }
