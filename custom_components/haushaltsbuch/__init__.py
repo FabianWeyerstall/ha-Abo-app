@@ -1,6 +1,7 @@
 """Haushaltsbuch: due dates of subscriptions, contracts and income in Home Assistant."""
 from __future__ import annotations
 
+import copy
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from .const import (
     VERSION,
 )
 from .engine import budget_status, contract_reminders, period_finder
+from . import backups
 from .ledger import Ledger
 from .store import Book, ValidationError
 from .websocket_api import async_register_websocket_commands
@@ -66,6 +68,22 @@ class HaushaltsbuchData:
         return frozenset(
             hid for hid, hh in self.book.data["households"].items() if hh.get("entities")
         )
+
+    async def async_backup(self, reason: str) -> str:
+        """Write a backup of all data to /config/haushaltsbuch_backups."""
+        document = backups.make_document(self.book, self.ledger, reason)
+        return await self.hass.async_add_executor_job(
+            backups.write, backups.backup_dir(self.hass), document
+        )
+
+    async def async_restore(self, document: dict) -> None:
+        """Replace all data with a backup; the current state is saved first."""
+        backups.check_document(document)
+        await self.async_backup("before_restore")
+        self.book = Book(copy.deepcopy(document["book"]))
+        self.ledger = Ledger(copy.deepcopy(document.get("ledger") or {"users": {}}))
+        await self.async_ledger_changed()
+        await self.async_changed()
 
     async def async_ledger_changed(self) -> None:
         await self.ledger_store.async_save(self.ledger.data)

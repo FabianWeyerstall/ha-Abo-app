@@ -304,7 +304,7 @@ Tippe auf einen Anteil (z.B. „wahrscheinlich“, „Sonderposten, umgelegt“,
 Jeder Home-Assistant-Nutzer hat seine eigenen, privaten Posten und seinen eigenen Kontostand. Wer möchte, legt ein **Haushaltsbuch** an und lädt andere HA-Nutzer ein. Beim Bearbeiten eines Postens wählst du, ob er nur für dich oder für den Haushalt sichtbar ist. Das Haushaltsbuch zeigt die gemeinsamen Einnahmen und Ausgaben aller Mitglieder und hat ein eigenes Haushaltskonto.
 
 - Nur der Besitzer kann einen Posten ändern, Mitglieder dürfen gemeinsame Buchungen bestätigen.
-- Auch HA-Admins sehen keine privaten Posten anderer Nutzer.
+- Auch HA-Admins sehen im Haushaltsbuch keine privaten Posten anderer Nutzer. (Sicherungen enthalten allerdings die Daten aller Nutzer und sind deshalb nur für Admins.)
 - Optional pro Haushalt: ein **Kalender** und **Sensoren** (nächste Ausgabe, nächste Einnahme, Kontostand zum Monatsende) für Dashboards und Automationen. Diese Entitäten sind für alle HA-Nutzer sichtbar, daher standardmäßig aus.
 
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/11-haushalt.png" alt="Haushalt" width="260">
@@ -314,6 +314,26 @@ Tab **Haushalt** → **+ Haushalt anlegen**, Namen vergeben und andere HA-Nutzer
 ## Sichern und umziehen
 
 Tab **Posten** → **Exportieren** speichert deine eigenen Posten als JSON-Datei (auf dem iPhone über das Teilen-Menü, „In Dateien sichern“). **Importieren** liest so eine Datei wieder ein, wahlweise zusätzlich zu den vorhandenen Posten (Doppelte werden übersprungen) oder als Ersatz. Importierte Posten sind zunächst privat.
+
+### Sicherungen und zurückspielen
+
+Tab **Haushalt** → **Sicherungen** (nur für HA-Admins): **Jetzt sichern** speichert alles, also Posten, Haushalte, Kontostände und die Umsätze der Statistik, für alle Nutzer. Automatisch gesichert wird außerdem vor jedem CSV-Import und vor jedem Zurückspielen. Die letzten 30 Sicherungen liegen als JSON in `/config/haushaltsbuch_backups` und sind damit auch in den normalen Home-Assistant-Backups enthalten. Jede Sicherung lässt sich **herunterladen** oder **zurückspielen**, und mit **Sicherungsdatei zurückspielen …** auch eine heruntergeladene Datei.
+
+## Umsätze aus der Banking-App importieren (CSV)
+
+Tab **Posten** → **Importieren** nimmt neben der Export-Datei auch CSV-Dateien mit Umsätzen aus deiner Banking-App, auch mehrere auf einmal (eine pro Konto). Die Datei wird nur im Browser gelesen. Gespeichert wird erst, was du im Dialog übernimmst.
+
+- **Neue regelmäßige Zahlungen** (Gehalt, Miete, Versicherungen, Abos …) werden mit Turnus, nächstem Termin und Sicherheitsstufe vorgeschlagen. Was seit Monaten nicht mehr kommt (alte Wohnung, gekündigter Vertrag), wird nicht vorgeschlagen.
+- **Passt zu deinen Posten:** Buchungen zu vorhandenen Posten werden mit echtem Datum und Betrag abgehakt, Kartenzahlungen landen als Ausgaben im passenden Budget. Weicht der Betrag dauerhaft ab, wird eine Preisänderung angeboten. Das Haushaltsbuch merkt sich, welche Lastschrift zu welchem Posten gehört.
+- **Selten oder unregelmäßig:** jährliche Beiträge, Jahresabrechnungen (Nachzahlung oder Erstattung) und gleitende Posten wie der Friseur, zunächst nicht angehakt.
+- **Als Budget anlegen?** Häufige Kartenzahlungen einer Kategorie (z.B. Lebensmittel) als Budget pro Monat.
+- Umbuchungen zwischen deinen eigenen Konten zählen nicht mit. Vorschläge kommen aus den letzten zwei Jahren, ältere Umsätze helfen nur bei Jährlichem.
+
+Erkannt werden u.a. die Spalten Datum, Betrag, Name/Empfänger, Verwendungszweck, Kategorie, Konto, Mandatsreferenz und Gläubiger-ID, mit Semikolon oder Komma getrennt.
+
+## Statistik
+
+Beim CSV-Import kannst du alle Umsätze **für die Statistik speichern**. Sie liegen in einer eigenen Datei in deinem Home Assistant (`.storage/haushaltsbuch.ledger`) und sind nur für dich sichtbar. Der Tab **Statistik** zeigt pro Jahr oder über alle Jahre: eingenommen, ausgegeben, übrig (mit Vergleich zum Vorjahr, im laufenden Jahr zum gleichen Zeitraum), den Verlauf pro Jahr oder Monat und die Ausgaben nach Kategorie mit Unterkategorien und den größten Empfängern. Über alle Jahre steht neben jeder Kategorie, wie sie sich vom ersten zum letzten vollen Jahr entwickelt hat. **Alle löschen** entfernt die gespeicherten Umsätze wieder.
 
 ## Inkognito-Modus
 
@@ -343,4 +363,4 @@ Die Berechnung (`engine.py`) und die Zugriffsregeln (`store.py`) haben keine Abh
 
 ## Neue Version veröffentlichen
 
-Version in `custom_components/haushaltsbuch/manifest.json` und `const.py` erhöhen und nach `main` mergen. Der Workflow „Release“ legt dann automatisch das GitHub-Release `vX.Y.Z` an, und HACS bietet das Update an.
+Version in `custom_components/haushaltsbuch/manifest.json` und `const.py` erhöhen und nach `main` mergen. Der Workflow „Release“ legt dann automatisch das GitHub-Release `vX.Y.Z` an, und HACS bietet das Update an. Eine Version wie `0.10.0b1` wird als Vorabversion (Beta) veröffentlicht. HACS zeigt sie nur, wenn beim Haushaltsbuch „Beta-Versionen anzeigen“ eingeschaltet ist. Eine Beta lässt sich auch von einem Branch aus veröffentlichen: Workflow „Release“ manuell für diesen Branch starten.

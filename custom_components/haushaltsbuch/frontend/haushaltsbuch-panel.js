@@ -898,6 +898,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._calendar = await this._ws("forecast", { scope, start: iso(first), end: iso(last) });
     } else if (this._view === "months") {
       this._summary = await this._ws("summary", { scope, months: 12 });
+    } else if (this._view === "households" && this._state.user.is_admin) {
+      this._backups = await this._ws("backup/list");
     } else if (this._view === "stats") {
       this._ledger = await this._ws("ledger/rows");
     } else if (this._view === "dashboard") {
@@ -2035,7 +2037,77 @@ class HaushaltsbuchPanel extends HTMLElement {
           </label>
         </div>`
       )
-      .join("") : `<div class="card empty">${tr("Noch kein Haushaltsbuch.", "No household yet.")}</div>`}`;
+      .join("") : `<div class="card empty">${tr("Noch kein Haushaltsbuch.", "No household yet.")}</div>`}
+    ${this._state.user.is_admin ? this._renderBackups() : ""}`;
+  }
+
+  _renderBackups() {
+    const reasons = {
+      manual: tr("von Hand", "manual"),
+      csv_import: tr("vor CSV-Import", "before CSV import"),
+      before_restore: tr("vor Wiederherstellen", "before restore"),
+      upload: tr("hochgeladene Datei", "uploaded file"),
+    };
+    const list = this._backups?.backups || [];
+    const when = (created) => {
+      const d = new Date(created);
+      return `${d.toLocaleDateString(DATE_LOCALE, { day: "2-digit", month: "2-digit", year: "numeric" })}, ${d.toLocaleTimeString(DATE_LOCALE, { hour: "2-digit", minute: "2-digit" })}`;
+    };
+    return `<div class="card">
+      <div class="row-between">
+        <h3>${tr("Sicherungen", "Backups")}</h3>
+        <button data-action="backup-create">${tr("Jetzt sichern", "Back up now")}</button>
+      </div>
+      <p class="hint">${tr(`Sichert alles: Posten, Haushalte, Kontostände und die Umsätze der Statistik, für alle Nutzer. Automatisch vor jedem CSV-Import und vor jedem Wiederherstellen. Die letzten 30 liegen in <code>${esc(this._backups?.folder || "/config/haushaltsbuch_backups")}</code> und sind auch in den normalen Home-Assistant-Backups enthalten.`, `Backs up everything: entries, households, balances and the statistics transactions, for all users. Automatically before every CSV import and every restore. The last 30 are kept in <code>${esc(this._backups?.folder || "/config/haushaltsbuch_backups")}</code> and are part of normal Home Assistant backups too.`)}</p>
+      ${list.length ? `<div class="backup-list">${list
+        .map((b) => `<div class="backup-row">
+          <div class="entry-main">
+            <div class="entry-name">${when(b.created)}</div>
+            <div class="entry-meta">${esc(reasons[b.reason] || b.reason)} · ${tr(`${b.items} Posten`, `${b.items} entries`)}${b.households ? ` · ${tr(`${b.households} Haushalte`, `${b.households} households`)}` : ""}${b.rows ? ` · ${tr(`${b.rows} Umsätze`, `${b.rows} transactions`)}` : ""} · ${Math.max(1, Math.round(b.size / 1024))} KB</div>
+          </div>
+          <div class="backup-actions">
+            <button class="secondary small" data-action="backup-download" data-id="${esc(b.id)}">${tr("Herunterladen", "Download")}</button>
+            <button class="secondary small" data-action="backup-restore" data-id="${esc(b.id)}" data-created="${esc(when(b.created))}">${tr("Zurückspielen", "Restore")}</button>
+          </div>
+        </div>`)
+        .join("")}</div>` : `<p class="hint">${tr("Noch keine Sicherung vorhanden.", "No backup yet.")}</p>`}
+      <div class="row-actions">
+        <button class="secondary small" data-action="backup-upload">${tr("Sicherungsdatei zurückspielen …", "Restore from file …")}</button>
+        <input type="file" accept=".json,application/json" data-change="backup-file" hidden>
+      </div>
+    </div>`;
+  }
+
+  async _downloadJson(name, data) {
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const file = new File([blob], name, { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+        return;
+      } catch (err) {
+        if (err.name === "AbortError") return;
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  _restoreFinished(summary) {
+    setTimeout(() => {
+      this._dialog = {
+        type: "notice",
+        title: tr("Zurückgespielt", "Restored"),
+        text: tr(`Der Stand vom ${new Date(summary.created).toLocaleString(DATE_LOCALE)} ist wieder da (${summary.items} Posten). Der Stand davor wurde vorher gesichert.`, `The state of ${new Date(summary.created).toLocaleString(DATE_LOCALE)} is back (${summary.items} entries). The state before was backed up first.`),
+      };
+      this._render();
+    });
   }
 
   // ---------------------------------------------------------------- dialogs
@@ -2285,7 +2357,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${section(tr("Neue regelmäßige Buchungen", "New regular payments"), "", d.suggestions.map(newRow).join(""))}
       ${section(tr("Selten oder unregelmäßig", "Rare or irregular"), tr("Nur einmal gesehen oder ohne festen Abstand. Gleitende Posten lernen den Abstand weiter, sobald du Termine bestätigst.", "Seen only once or without a fixed gap. Rolling entries keep learning the gap as you confirm dates."), d.others.map(newRow).join(""))}
       ${section(tr("Als Budget anlegen?", "Create as a budget?"), tr("Viele unregelmäßige Ausgaben derselben Kategorie. Die Kartenzahlungen dieses Monats werden gleich eingetragen.", "Many irregular expenses of the same category. This month's card payments are added right away."), d.budgets.map(budgetRow).join(""))}
-      <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert wird nur, was angehakt ist. Das Haushaltsbuch merkt sich, welche Lastschrift zu welchem Posten gehört, und ordnet sie beim nächsten Import von selbst zu.", "The file is only read here in the browser. Only what is ticked is saved. The Household Budget remembers which direct debit belongs to which entry and assigns it by itself next time.")}</p>
+      <p class="hint">${tr("Die Datei wird nur hier im Browser gelesen. Gespeichert wird nur, was angehakt ist. Das Haushaltsbuch merkt sich, welche Lastschrift zu welchem Posten gehört, und ordnet sie beim nächsten Import von selbst zu. Vorher wird automatisch eine Sicherung angelegt.", "The file is only read here in the browser. Only what is ticked is saved. The Household Budget remembers which direct debit belongs to which entry and assigns it by itself next time.")}</p>
       <div class="dialog-actions"><span></span><div>
         <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
         <button type="submit" class="csv-submit" ${picked || d.saveLedger ? "" : "disabled"}>${this._csvSubmitLabel(picked, d.saveLedger)}</button>
@@ -2330,6 +2402,8 @@ class HaushaltsbuchPanel extends HTMLElement {
       })),
       ...budgets.map((b) => ({ name: b.name, direction: "expense", amount: b.amount, category: b.category, icon: b.icon, start_date: monthStart, schedule: { frequency: "budget", interval: 1 }, note, bank_keys: [b.bankKey] })),
     ];
+    // Safety net: everything can be put back under Household → Backups.
+    await this._ws("backup/create", { reason: "csv_import" });
     const result = { added: 0, confirmed: 0, spendings: 0, price_changes: 0, ledger: 0 };
     if (d.saveLedger) {
       const rows = d.bookings.map((b) => ({ date: b.date, amount: b.amount, name: tidyName(b.name), main_category: b.main, category: b.category, account: b.account, purpose: b.purpose }));
@@ -2691,6 +2765,25 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._saveSpecialSettings({ special_min_months: Number(el.value) });
     } else if (kind === "special-amount") {
       this._saveSpecialSettings({ special_min_amount: Number(el.value) || 0 });
+    } else if (kind === "backup-file") {
+      const file = el.files?.[0];
+      el.value = "";
+      if (!file) return;
+      file.text().then((text) => {
+        let doc;
+        try {
+          doc = JSON.parse(text);
+        } catch {
+          doc = null;
+        }
+        if (doc?.format !== "haushaltsbuch-backup") {
+          this._error = tr("Das ist keine Sicherungsdatei des Haushaltsbuchs. Eine Export-Datei spielst du unter „Posten“ → „Importieren“ ein.", "This is not a Household Budget backup file. Import an export file under “Entries” → “Import”.");
+          this._render();
+          return;
+        }
+        if (!confirm(tr(`Alles auf den Stand der Datei vom ${new Date(doc.created).toLocaleString(DATE_LOCALE)} zurücksetzen? Das gilt für alle Nutzer. Der jetzige Stand wird vorher gesichert.`, `Reset everything to the file from ${new Date(doc.created).toLocaleString(DATE_LOCALE)}? This applies to all users. The current state is backed up first.`))) return;
+        this._run(async () => this._restoreFinished(await this._ws("backup/restore", { document: doc })));
+      });
     } else if (kind === "stats-year") {
       this._statsYear = el.value;
       this._statsOpen = null;
@@ -2815,6 +2908,25 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     ev.stopPropagation();
     switch (a) {
+      case "backup-create":
+        this._run(() => this._ws("backup/create", { reason: "manual" }));
+        break;
+      case "backup-download":
+        this._ws("backup/get", { backup_id: target.dataset.id })
+          .then((doc) => this._downloadJson(`haushaltsbuch-sicherung-${target.dataset.id}`, doc))
+          .catch((err) => {
+            this._error = this._errorText(err);
+            this._render();
+          });
+        break;
+      case "backup-restore":
+        if (confirm(tr(`Alles auf den Stand vom ${target.dataset.created} zurücksetzen? Das gilt für alle Nutzer. Der jetzige Stand wird vorher gesichert.`, `Reset everything to ${target.dataset.created}? This applies to all users. The current state is backed up first.`))) {
+          this._run(async () => this._restoreFinished(await this._ws("backup/restore", { backup_id: target.dataset.id })));
+        }
+        break;
+      case "backup-upload":
+        this.shadowRoot.querySelector('input[data-change="backup-file"]').click();
+        break;
       case "stats-year":
         this._statsYear = target.dataset.year;
         this._render();
@@ -3206,6 +3318,10 @@ const STYLES = `
   input.csv-name:hover, input.csv-name:focus { border-color: var(--divider-color); background: var(--card-background-color); }
   .csv-sub { margin: 16px 0 0; }
   .stats-head { flex-wrap: wrap; gap: 8px; }
+  .backup-list { display: flex; flex-direction: column; margin: 8px 0; }
+  .backup-row { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-top: 1px solid var(--divider-color); flex-wrap: wrap; }
+  .backup-row .entry-main { flex: 1; min-width: 180px; }
+  .backup-actions { display: flex; gap: 6px; }
   .stats-filters { display: flex; gap: 8px; }
   .stats-filters select { width: auto; padding: 4px 8px; font-size: 14px; }
   .delta { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); }

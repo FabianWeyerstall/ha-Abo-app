@@ -27,6 +27,7 @@ from .engine import (
     salary_periods,
     parse_date,
 )
+from . import backups
 from .ledger import FIELDS as LEDGER_FIELDS
 from .store import AccessError, ValidationError
 
@@ -59,6 +60,10 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
         ws_ledger_rows,
         ws_ledger_add,
         ws_ledger_clear,
+        ws_backup_list,
+        ws_backup_create,
+        ws_backup_get,
+        ws_backup_restore,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -163,7 +168,7 @@ async def ws_state(hass, connection, msg, data):
     categories_en = sorted(set(DEFAULT_CATEGORIES_EN) | used)
     return (
         {
-            "user": {"id": user_id, "name": names.get(user_id, ""), **user},
+            "user": {"id": user_id, "name": names.get(user_id, ""), "is_admin": connection.user.is_admin, **user},
             "users": active_users,
             "items": sorted(items, key=lambda i: i["name"].lower()),
             "households": households,
@@ -413,6 +418,69 @@ async def ws_bank_history(hass, connection, msg, data):
 async def ws_bank_sync(hass, connection, msg, data):
     result = data.book.bank_sync(connection.user.id, msg)
     return (result, True)
+
+
+# ------------------------------------------------------------------ backups
+# A backup holds everyone's data, so only administrators may use them.
+
+def _require_admin(connection) -> None:
+    if not connection.user.is_admin:
+        raise AccessError("admin")
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/backup/list"})
+@websocket_api.async_response
+@_handler
+async def ws_backup_list(hass, connection, msg, data):
+    _require_admin(connection)
+    found = await hass.async_add_executor_job(backups.listing, backups.backup_dir(hass))
+    return ({"backups": found, "folder": "/config/haushaltsbuch_backups"}, False)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/backup/create", vol.Optional("reason", default="manual"): vol.In(backups.REASONS)}
+)
+@websocket_api.async_response
+@_handler
+async def ws_backup_create(hass, connection, msg, data):
+    # Everyone may trigger the automatic backup before a CSV import; it reveals nothing.
+    if msg["reason"] != "csv_import":
+        _require_admin(connection)
+    return ({"id": await data.async_backup(msg["reason"])}, False)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/backup/get", vol.Required("backup_id"): str}
+)
+@websocket_api.async_response
+@_handler
+async def ws_backup_get(hass, connection, msg, data):
+    _require_admin(connection)
+    document = await hass.async_add_executor_job(backups.read, backups.backup_dir(hass), msg["backup_id"])
+    return (document, False)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/backup/restore",
+        vol.Exclusive("backup_id", "source"): str,
+        vol.Exclusive("document", "source"): dict,
+    }
+)
+@websocket_api.async_response
+@_handler
+async def ws_backup_restore(hass, connection, msg, data):
+    _require_admin(connection)
+    if "backup_id" in msg:
+        document = await hass.async_add_executor_job(backups.read, backups.backup_dir(hass), msg["backup_id"])
+    elif "document" in msg:
+        document = backups.check_document(msg["document"])
+        # Keep the uploaded file in the list too, so it can be restored again later.
+        await hass.async_add_executor_job(backups.write, backups.backup_dir(hass), {**document, "reason": "upload"})
+    else:
+        raise ValidationError("backup_id")
+    await data.async_restore(document)
+    return (backups.summary(document), False)
 
 
 # --------------------------------------------------------------- statistics
