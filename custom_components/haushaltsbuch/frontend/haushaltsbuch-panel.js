@@ -267,7 +267,8 @@ const CSV_CATEGORY_RULES = [
   [/wasser/, "Wasser", "mdi:water"],
   [/handy|mobilfunk/, "Internet & Telefon", "mdi:cellphone"],
   [/internet|telefon|festnetz/, "Internet & Telefon", "mdi:router-wireless"],
-  [/kfz|auto/, "Auto", "mdi:car"],
+  [/lebensversicherung|rentenversicherung|altersvorsorge/, "Versicherungen", "mdi:shield-check"],
+  [/\bkfz|\bauto(?!mat)|\bpkw\b|motorrad/, "Auto", "mdi:car"],
   [/versicherung/, "Versicherungen", "mdi:shield-check"],
   [/miete|wohnen|nebenkosten/, "Wohnen", "mdi:home"],
   [/kredit|darlehen|finanzierung/, "Kredite", "mdi:bank"],
@@ -338,17 +339,47 @@ function nextDue(dateIso, rhythm) {
 const CARD_PAYMENT = /karte|kartenzahlung|debitkarte|visa|girocard|pos\b/i;
 const RARE_WORDS = /versicherung|steuer|beitrag|verein|mitglied|jahres|wartung|tüv|gebühr|abo\b|lizenz/i;
 
-/** Does this existing item look like the payee of these bookings? */
-function looksLike(item, name, category, amount, day) {
-  const words = nameKey(item.name).split(" ").filter((w) => w.length >= 4);
-  const key = nameKey(name);
-  if (words.some((w) => key.includes(w))) return true;
-  if (item.category !== category) return false;
+// Words that say what kind of contract it is, not with whom: "Lebensversicherung"
+// must not match an item called "Autoversicherung".
+const GENERIC_WORDS = /^(versicherung(en)?|\w*versicherung|steuer(n)?|\w*steuer|beitr(ag|äge)|rechnung|gebühr(en)?|vertrag|kredit|darlehen|miete|sparen|sparplan|lastschrift|überweisung|dauerauftrag|zahlung|abschlag|rate|monat(lich)?|jahr(es)?|kosten|konto|bank|service|online|abo|kunde|kunden|mandat|referenz|gmbh)$/;
+const wordsOf = (text) => String(text || "").toLowerCase().replace(LEGAL_FORMS, " ").replace(/[^a-zäöüß ]/g, " ").split(/\s+/).filter((w) => w.length >= 4 && !GENERIC_WORDS.test(w));
+
+/**
+ * How well does this existing item fit a payee (0 = not at all)? A name hit
+ * counts most, but only with a similar amount; without a name the amount must
+ * be (almost) exact and day or category must agree.
+ */
+function similarity(item, name, purpose, category, amount, day) {
   const expected = Number(item.current_amount ?? item.amount) || 0;
-  if (Math.abs(expected - amount) <= amount * 0.15) return true;
-  // Same category and about the same day of the month: probably the same contract at a new price.
+  if (!expected || !amount) return 0;
+  const diff = Math.abs(expected - amount) / Math.max(expected, amount);
+  const words = wordsOf(item.name);
+  const hit = (text) => {
+    const bank = wordsOf(text);
+    return words.some((w) => bank.some((x) => x === w || x.startsWith(w) || (x.length >= 5 && w.startsWith(x))));
+  };
   const itemDay = Number(String(item.start_date).slice(8));
-  return day && Math.abs(itemDay - day) <= 3 && Math.abs(expected - amount) <= amount * 0.3;
+  const dayGap = day && itemDay ? Math.abs(itemDay - day) : 99;
+  const sameDay = Math.min(dayGap, 31 - dayGap) <= 4;
+  const sameCategory = item.category === category;
+  if (hit(name) && diff <= 0.35) return 4 - diff;
+  if (hit(purpose) && diff <= 0.15) return 3.5 - diff;
+  if (diff <= 0.01 && (sameDay || sameCategory)) return 3 - diff;
+  if (sameCategory && sameDay && diff <= 0.15) return 2 - diff;
+  if (sameCategory && diff <= 0.05) return 1.5 - diff;
+  return 0;
+}
+
+/** The existing item that fits best, or undefined. */
+function bestItem(items, direction, name, purpose, category, amount, day) {
+  let best;
+  let bestScore = 0;
+  for (const item of items) {
+    if (item.direction !== direction) continue;
+    const score = similarity(item, name, purpose, category, amount, day);
+    if (score > bestScore) [best, bestScore] = [item, score];
+  }
+  return best;
 }
 
 /**
@@ -406,7 +437,7 @@ function analyzeBank(bookings, items, history, entries) {
       const settlement = keyOwner.get(`${group.key}|y`);
       if (settlement) {
         const match = matchItem(settlement, outliers.filter((b) => b.date >= recentFrom), entries, history[settlement.id]);
-        if (match.confirmations.length) matches.push({ ...match, priceChange: null, key: `i:${settlement.id}`, bankKey: `${group.key}|y`, item: settlement, bankName: tidyName(outliers[0].name), remembered: true, checked: true });
+        if (match.confirmations.length) matches.push({ ...match, priceChange: null, key: `i:${settlement.id}`, bankKey: `${group.key}|y`, item: settlement, bankName: tidyName(outliers[0].name), remembered: true, checked: true, bookings: outliers.filter((b) => b.date >= recentFrom) });
       } else {
         const yearly = settlementSuggestion(group, outliers, to);
         if (yearly) others.push({ ...yearly, checked: false, target: "new" });
@@ -423,15 +454,15 @@ function analyzeBank(bookings, items, history, entries) {
     let item = keyOwner.get(group.key);
     if (item?.schedule?.frequency === "budget") continue; // handled with the budgets below
     let remembered = Boolean(item);
-    if (!item && !card) item = recurringItems.find((i) => i.direction === last.direction && looksLike(i, last.name, category, amount, day));
+    if (!item && !card) item = bestItem(recurringItems, last.direction, last.name, last.purpose, category, amount, day);
     if (item) {
+      // Known payee: never suggested again, even when there is nothing to confirm
+      // (e.g. the item was entered after these bookings).
       const match = matchItem(item, list, entries, history[item.id]);
-      if (match.confirmations.length || match.priceChange || remembered) {
-        list.forEach((b) => used.add(b));
-        if (!match.confirmations.length && !match.priceChange) continue; // known and up to date
-        matches.push({ ...match, key: `i:${item.id}`, bankKey: group.key, item, bankName: tidyName(last.name), remembered, checked: true });
-        continue;
-      }
+      list.forEach((b) => used.add(b));
+      if (remembered && !match.confirmations.length && !match.priceChange) continue; // known and up to date
+      matches.push({ ...match, key: `i:${item.id}`, bankKey: group.key, item, bankName: tidyName(last.name), remembered, checked: true, bookings: list });
+      continue;
     }
     // 2. New regular payment; yearly ones also from the whole history.
     let suggestion = recurringSuggestion(group, list, to, category, icon);
@@ -448,7 +479,7 @@ function analyzeBank(bookings, items, history, entries) {
     }
     if (suggestion) {
       list.forEach((b) => used.add(b));
-      const twin = recurringItems.find((i) => i.direction === suggestion.direction && looksLike(i, suggestion.name, category, amount, day));
+      const twin = bestItem(recurringItems, suggestion.direction, suggestion.name, last.purpose, category, amount, day);
       suggestions.push({ ...suggestion, existing: twin ? twin.name : null, checked: !twin, target: "new" });
       continue;
     }
@@ -492,6 +523,7 @@ function analyzeBank(bookings, items, history, entries) {
           item: budget,
           bankKey: `c:${c.name}`,
           spendings: fresh.map((b) => ({ item_id: budget.id, date: b.date, amount: Math.abs(b.amount), note: tidyName(b.name) })),
+          bookings: fresh,
           total: fresh.reduce((a, b) => a - b.amount, 0),
           checked: true,
         });
@@ -2285,24 +2317,52 @@ class HaushaltsbuchPanel extends HTMLElement {
 
     const matchRow = (m) => {
       const budget = Boolean(m.spendings);
+      const list = [...(m.bookings || [])].sort((x, y) => y.date.localeCompare(x.date));
+      const last = list[0];
       const meta = budget
-        ? tr(`${count(m.spendings.length, "1 Ausgabe", "# Ausgaben")} eintragen`, `add ${count(m.spendings.length, "1 expense", "# expenses")}`)
+        ? tr(`${count(m.spendings.length, "1 Kartenzahlung", "# Kartenzahlungen")} als Ausgabe eintragen`, `add ${count(m.spendings.length, "1 card payment", "# card payments")} as expenses`)
         : m.confirmations.length
-          ? tr(`${count(m.confirmations.length, "1 Buchung", "# Buchungen")} abhaken · zuletzt ${shortDate(m.lastDate)}`, `confirm ${count(m.confirmations.length, "1 booking", "# bookings")} · last ${shortDate(m.lastDate)}`)
-          : tr("schon alles abgehakt", "everything confirmed already");
-      const learn = m.remembered ? "" : `<span class="chip shared">${tr(`erkannt an „${esc(m.bankName || m.bankKey.slice(2))}“, wird gemerkt`, `recognised by “${esc(m.bankName || m.bankKey.slice(2))}”, will be remembered`)}</span>`;
+          ? tr(`${count(m.confirmations.length, "1 Termin", "# Termine")} abhaken`, `confirm ${count(m.confirmations.length, "1 date", "# dates")}`)
+          : tr("nichts Offenes abzuhaken, nur die Zuordnung wird gemerkt", "nothing open to confirm, only the assignment is remembered");
+      const learn = m.remembered ? "" : `<span class="chip shared">${tr("neu erkannt, wird gemerkt", "newly recognised, will be remembered")}</span>`;
       const price = m.priceChange
         ? `<label class="check csv-price">${check({ key: m.key, checked: m.priceChange.checked }, "csv-price")} ${tr(`Neuer Preis ab ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} statt ${this._moneyPlain(m.priceChange.before)}`, `New price from ${shortDate(m.priceChange.from)}: ${this._moneyPlain(m.priceChange.amount)} instead of ${this._moneyPlain(m.priceChange.before)}`)}</label>`
+        : "";
+      const itemAmount = Number(m.item.current_amount ?? m.item.amount) || 0;
+      const yours = budget
+        ? tr(`Dein Budget: ${this._moneyPlain(itemAmount)} pro Monat`, `Your budget: ${this._moneyPlain(itemAmount)} per month`)
+        : tr(`Dein Posten: ${this._moneyPlain(itemAmount)} · ${esc(scheduleLabel(m.item))}`, `Your entry: ${this._moneyPlain(itemAmount)} · ${esc(scheduleLabel(m.item))}`);
+      const bank = last
+        ? tr(`Bank: „${esc(tidyName(last.name))}“ · ${count(list.length, "1 Buchung", "# Buchungen")} · zuletzt ${shortDate(last.date)} ${this._moneyPlain(Math.abs(last.amount))}`, `Bank: “${esc(tidyName(last.name))}” · ${count(list.length, "1 booking", "# bookings")} · last ${shortDate(last.date)} ${this._moneyPlain(Math.abs(last.amount))}`)
+        : "";
+      const confirmedOn = new Map((m.confirmations || []).map((c) => [`${c.actual_date}|${c.actual_amount}`, c.due_date]));
+      const line = (b) => {
+        const due = confirmedOn.get(`${b.date}|${Math.abs(b.amount)}`);
+        const what = budget
+          ? ""
+          : due
+            ? tr(`hakt Termin ${shortDate(due)} ab`, `confirms ${shortDate(due)}`)
+            : b.date < m.item.start_date
+              ? tr("vor Beginn deines Postens", "before your entry starts")
+              : tr("schon abgehakt", "already confirmed");
+        return `<li><div class="csv-detail-head"><span>${shortDate(b.date)}</span><b>${this._moneyPlain(b.amount)}</b>${what ? `<span class="what">${what}</span>` : ""}</div>
+          <div class="csv-detail-text">${esc(tidyName(b.name))}${b.purpose ? ` · ${esc(b.purpose.slice(0, 80))}` : ""}</div></li>`;
+      };
+      const shown = list.slice(0, 6);
+      const details = list.length
+        ? `<details class="csv-detail"><summary>${tr("Buchungen ansehen", "Show bookings")}</summary><ul>${shown.map(line).join("")}</ul>${list.length > shown.length ? `<div class="csv-detail-more">${tr(`und ${list.length - shown.length} ältere`, `and ${list.length - shown.length} older`)}</div>` : ""}</details>`
         : "";
       return `<div class="csv-row-wrap"><label class="csv-row">
           ${check(m)}
           <div class="entry-icon">${this._icon(m.item.icon)}</div>
           <div class="entry-main">
             <div class="entry-name">${esc(m.item.name)}</div>
+            <div class="entry-meta plain">${yours}</div>
+            ${bank && !budget ? `<div class="entry-meta plain">${bank}</div>` : ""}
             <div class="entry-meta">${meta} ${learn}</div>
           </div>
           ${budget ? amount(m.spendings.reduce((a, x) => a + x.amount, 0), "expense") : ""}
-        </label>${price}</div>`;
+        </label>${price}${details}</div>`;
     };
 
     const own = (direction) => d.items.filter((i) => i.direction === direction && i.schedule?.frequency !== "budget");
@@ -3355,6 +3415,15 @@ const STYLES = `
   .csv-row-wrap > label.csv-price { margin: 0 0 6px 38px; width: calc(100% - 38px); box-sizing: border-box; }
   select.csv-target { width: auto; field-sizing: content; max-width: calc(100% - 92px); margin: -6px 0 6px 92px; padding: 2px 4px; border: none; background: transparent; color: var(--primary-color); font-size: 12px; cursor: pointer; }
   label.csv-price { font-size: 13px; }
+  .csv-row .entry-meta.plain { display: block; }
+  .csv-detail { margin: -4px 0 8px 38px; font-size: 12px; color: var(--secondary-text-color); }
+  .csv-detail summary { cursor: pointer; color: var(--primary-color); }
+  .csv-detail ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .csv-detail li { padding: 4px 0; border-top: 1px solid var(--divider-color); }
+  .csv-detail-head { display: flex; gap: 8px; align-items: baseline; color: var(--primary-text-color); }
+  .csv-detail-head .what { margin-left: auto; color: var(--secondary-text-color); }
+  .csv-detail-text { overflow-wrap: anywhere; }
+  .csv-detail-more { padding-top: 4px; }
   label.check.muted { color: var(--secondary-text-color); }
   label.check small { display: block; font-size: 12px; color: var(--secondary-text-color); }
   label.check.option input { margin-top: 3px; }
