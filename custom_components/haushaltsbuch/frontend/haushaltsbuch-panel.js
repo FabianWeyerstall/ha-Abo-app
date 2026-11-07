@@ -175,9 +175,9 @@ const CSV_COLUMNS = {
 };
 
 /** Split CSV text into rows of fields; handles quotes and ; , or tab. */
-function splitCsv(text) {
+function splitCsv(text, forced = null) {
   const firstLines = text.split(/\r?\n/).slice(0, 5).join("\n");
-  const delimiter = [";", "\t", ","].sort((a, b) => firstLines.split(b).length - firstLines.split(a).length)[0];
+  const delimiter = forced || [";", "\t", ","].sort((a, b) => firstLines.split(b).length - firstLines.split(a).length)[0];
   const rows = [];
   let row = [];
   let field = "";
@@ -250,6 +250,348 @@ function dropOwnTransfers(bookings) {
     if (twin) drop.add(out).add(twin);
   }
   return { bookings: bookings.filter((b) => !drop.has(b)), transfers: drop.size };
+}
+
+// ------------------------------------------------------------ other banks
+// Outbank files keep the path above unchanged. Every other bank goes through
+// the reader below: it finds the header line itself, copes with debit/credit
+// columns, other date and number formats and SEPA tags in the purpose, and
+// asks the user which column is what when it is not sure (remembered per header).
+
+const BANK_FIELDS = ["date", "amount", "debit", "credit", "sign", "name", "payer", "purpose", "category", "text", "mandate", "creditor", "account", "counter"];
+const BANK_ALIASES = {
+  date: ["buchungstag", "buchungsdatum", "datum", "buchung", "booking date", "transaction date", "date", "wertstellung", "valutadatum", "valuta", "value date"],
+  amount: ["betrag", "betrag (eur)", "betrag in eur", "betrag eur", "betrag (€)", "umsatz", "umsatz in eur", "betrag in euro", "amount", "amount (eur)", "value"],
+  debit: ["soll", "belastung", "ausgang", "debit", "abgang", "lastschrift (eur)", "soll (eur)"],
+  credit: ["haben", "gutschrift", "eingang", "credit", "zugang", "haben (eur)"],
+  sign: ["soll/haben", "s/h", "soll haben", "kennung", "debit/credit", "credit/debit indicator"],
+  name: ["name", "empfaenger", "zahlungsempfaenger", "zahlungsempfaenger*in", "auftraggeber/empfaenger", "auftraggeber / beguenstigter", "beguenstigter/zahlungspflichtiger", "beguenstigter/auftraggeber", "auftraggeber/zahlungsempfaenger", "empfaenger/zahlungspflichtiger", "name zahlungsbeteiligter", "name des zahlungsbeteiligten", "zahlungsbeteiligter", "gegenpartei", "payee", "counterparty", "partner name", "beneficiary", "name gegenkonto"],
+  // Some banks name the payer of incoming money in a column of its own.
+  payer: ["zahlungspflichtige*r", "zahlungspflichtiger", "auftraggeber", "auftraggeber*in", "payer"],
+  purpose: ["verwendungszweck", "zweck", "vorgang/verwendungszweck", "verwendungszweck/ kundenreferenz", "buchungsdetails", "beschreibung", "purpose", "description", "payment reference", "reference", "details"],
+  category: ["kategorie", "category"],
+  text: ["buchungstext", "umsatzart", "art der zahlung", "vorgang", "transaction type", "type", "art"],
+  mandate: ["mandatsreferenz", "mandatsref", "mandate reference", "mandate"],
+  creditor: ["glaeubiger id", "glaeubiger-id", "glaeubiger identifikation", "glaeubigerid", "creditor id"],
+  account: ["auftragskonto", "eigenes konto", "kontonummer auftraggeber", "konto", "account", "iban auftragskonto"],
+  counter: ["iban zahlungsbeteiligter", "kontonummer/iban", "iban", "gegenkonto", "iban gegenkonto", "counterparty iban", "kontonummer"],
+};
+const normCell = (c) => String(c ?? "").replace(/^﻿/, "").trim().toLowerCase()
+  .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/\s+/g, " ").replace(/^"|"$/g, "");
+
+/** True for an Outbank export, which keeps the original reader. */
+function isOutbankCsv(text) {
+  return text.split(/\r?\n/, 12).some((line) => /(^|[;,\t])hauptkategorie([;,\t]|$)/i.test(line) && /(^|[;,\t])kategoriepfad([;,\t]|$)/i.test(line));
+}
+
+/** Bytes to text: UTF-8, or Windows-1252 for older exports. */
+function decodeBankBytes(buffer) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch (err) {
+    return new TextDecoder("windows-1252").decode(buffer);
+  }
+}
+
+function detectDelimiter(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 40);
+  let best = ";";
+  let bestScore = -1;
+  for (const d of [";", "\t", ",", "|"]) {
+    const counts = lines.map((l) => l.split(d).length - 1).filter((c) => c > 0);
+    if (!counts.length) continue;
+    const freq = {};
+    for (const c of counts) freq[c] = (freq[c] || 0) + 1;
+    const [mode, times] = Object.entries(freq).sort((a, b) => b[1] - a[1] || Number(b[0]) - Number(a[0]))[0];
+    const score = times * 10 + Number(mode);
+    if (score > bestScore) { best = d; bestScore = score; }
+  }
+  return best;
+}
+
+/** Column of each field in a header line: exact name first, then a name that starts like it. */
+function bankColumns(header) {
+  const cells = header.map(normCell);
+  const used = new Set();
+  const columns = {};
+  for (const exact of [true, false]) {
+    for (const field of BANK_FIELDS) {
+      if (columns[field] !== undefined) continue;
+      for (const alias of BANK_ALIASES[field]) {
+        const i = cells.findIndex((c, idx) => !used.has(idx) && c && (exact ? c === alias : c.startsWith(`${alias} `) || c.startsWith(`${alias}(`)));
+        if (i >= 0) { columns[field] = i; used.add(i); break; }
+      }
+    }
+  }
+  return columns;
+}
+
+const DATE_PATTERNS = /^(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})/;
+function detectDateFormat(values) {
+  let dmy = 0;
+  let mdy = 0;
+  let ymd = 0;
+  for (const v of values) {
+    const s = String(v || "").trim();
+    if (/^\d{8}$/.test(s)) { ymd++; continue; }
+    const m = s.match(DATE_PATTERNS);
+    if (!m) continue;
+    if (m[1].length === 4) ymd++;
+    else if (s.includes(".")) dmy++;
+    else if (Number(m[1]) > 12) dmy++;
+    else if (Number(m[2]) > 12) mdy++;
+  }
+  return ymd > dmy && ymd > mdy ? "ymd" : mdy > dmy ? "mdy" : "dmy";
+}
+function parseDateAs(value, format) {
+  const s = String(value || "").trim();
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  const m = s.match(DATE_PATTERNS);
+  if (!m) return null;
+  let [y, mo, d] = format === "ymd" || m[1].length === 4 ? [m[1], m[2], m[3]] : format === "mdy" ? [m[3], m[1], m[2]] : [m[3], m[2], m[1]];
+  if (y.length === 2) y = `20${y}`;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (date.getFullYear() !== Number(y) || date.getMonth() !== Number(mo) - 1 || Number(y) < 1990 || Number(y) > 2100) return null;
+  return iso(date);
+}
+function detectDecimal(values) {
+  let comma = 0;
+  let dot = 0;
+  for (const v of values) {
+    const s = String(v || "").replace(/[^\d.,]/g, "");
+    if (/,\d{1,2}$/.test(s)) comma++;
+    else if (/\.\d{1,2}$/.test(s)) dot++;
+  }
+  return dot > comma ? "." : ",";
+}
+/** A money cell: "1.234,56", "-12.50", "12,00 EUR", "12,00 S", "12,00-". */
+function parseMoneyCell(value, decimal) {
+  let s = String(value || "").trim();
+  if (!s) return NaN;
+  let sign = 1;
+  if (/\s?S$/i.test(s) && !/EUR$/i.test(s)) { sign = -1; s = s.replace(/\s?S$/i, ""); }
+  else if (/\s?H$/i.test(s)) s = s.replace(/\s?H$/i, "");
+  if (/-$/.test(s)) { sign = -sign; s = s.slice(0, -1); }
+  if (/^\(.*\)$/.test(s)) { sign = -sign; s = s.slice(1, -1); }
+  s = s.replace(/€|eur|euro/gi, "").replace(/^\+/, "").trim();
+  const v = parseAmount(s, decimal);
+  return Number.isFinite(v) ? v * sign : NaN;
+}
+
+/** SEPA tags in a purpose ("EREF+… MREF+… CRED+… SVWZ+…"). */
+function parseSepaTags(text) {
+  const s = String(text || "");
+  if (!/\b(EREF|MREF|CRED|SVWZ|KREF|ABWA)\+/.test(s)) return null;
+  const parts = {};
+  const re = /\b(EREF|KREF|MREF|CRED|DEBT|SVWZ|ABWA|ABWE|IBAN|BIC|COAM|OAMT)\+/g;
+  const marks = [...s.matchAll(re)];
+  marks.forEach((m, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1].index : s.length;
+    parts[m[1]] = s.slice(m.index + m[0].length, end).trim();
+  });
+  const before = s.slice(0, marks[0].index).trim();
+  return { purpose: [parts.SVWZ || "", before].filter(Boolean).join(" ").trim(), mandate: parts.MREF || "", creditor: parts.CRED || "", name: parts.ABWA || "" };
+}
+
+/** The Haushaltsbuch category of a booking from its texts, or "" without a rule. */
+function ruleCategory(b) {
+  const haystack = `${b.name} ${b.purpose}`.toLowerCase();
+  for (const [re, category] of CSV_CATEGORY_RULES) if (re.test(haystack)) return category;
+  return "";
+}
+
+/** Error that opens the "which column is what" dialog instead of a message. */
+const needsMapping = (info) => Object.assign(new Error(tr("Die Spalten der Datei wurden nicht sicher erkannt.", "The file's columns were not recognised reliably.")), { needsMapping: true, info });
+
+/** Header line and column guess of a CSV that is not from Outbank. */
+function guessBankLayout(text) {
+  const delimiter = detectDelimiter(text);
+  const rows = splitCsv(text.replace(/^﻿/, ""), delimiter).filter((r) => r.some((c) => String(c).trim()));
+  let headerRow = -1;
+  let columns = {};
+  for (let i = 0; i < Math.min(30, rows.length); i++) {
+    const c = bankColumns(rows[i]);
+    if (c.date !== undefined && (c.amount !== undefined || c.debit !== undefined || c.credit !== undefined)) { headerRow = i; columns = c; break; }
+  }
+  const sample = headerRow >= 0 ? rows.slice(headerRow + 1, headerRow + 41) : rows.slice(0, 40);
+  const col = (field) => sample.map((r) => r[columns[field]]);
+  return {
+    rows,
+    delimiter,
+    headerRow,
+    columns,
+    date: columns.date !== undefined ? detectDateFormat(col("date")) : "dmy",
+    decimal: detectDecimal([...(columns.amount !== undefined ? col("amount") : []), ...(columns.debit !== undefined ? col("debit") : []), ...(columns.credit !== undefined ? col("credit") : [])]),
+  };
+}
+
+const bankSignature = (rows, headerRow) => (rows[headerRow] || []).map(normCell).join(";").slice(0, 300);
+
+/** Bookings of a CSV that is not from Outbank, with an optional hand-made profile. */
+function parseGenericCsv(text, profiles = {}, force = null) {
+  const layout = guessBankLayout(text);
+  let { rows, headerRow, columns, date: dateFormat, decimal } = layout;
+  const known = headerRow >= 0 ? profiles[bankSignature(rows, headerRow)] : null;
+  // A remembered profile may have its header further down than the guess found.
+  const profile = force || known || Object.values(profiles).find((p) => rows[p.header_row] && profiles[bankSignature(rows, p.header_row)] === p) || null;
+  if (profile) {
+    headerRow = profile.header_row;
+    columns = profile.columns;
+    dateFormat = profile.date || dateFormat;
+    decimal = profile.decimal || decimal;
+  }
+  const info = { ...layout, headerRow: Math.max(0, headerRow), columns, date: dateFormat, decimal };
+  if (headerRow < 0 || columns.date === undefined || (columns.amount === undefined && columns.debit === undefined && columns.credit === undefined)) throw needsMapping(info);
+  // Banks without an account column often name the IBAN above the table.
+  const ibanAbove = rows.slice(0, headerRow).flat().map((c) => String(c).replace(/\s/g, "").toUpperCase()).find((c) => /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(c)) || "";
+  const bookings = [];
+  let bad = 0;
+  for (const r of rows.slice(headerRow + 1)) {
+    const get = (field) => (columns[field] !== undefined && columns[field] >= 0 ? String(r[columns[field]] ?? "").trim() : "");
+    const day = parseDateAs(get("date"), dateFormat);
+    let amount;
+    if (columns.amount !== undefined) {
+      amount = parseMoneyCell(get("amount"), decimal);
+      const sign = get("sign").toLowerCase();
+      if (sign) amount = Math.abs(amount) * (/^(s|d|soll|debit|dbit|-|belastung|ausgang)/.test(sign) ? -1 : 1);
+    } else {
+      const debit = parseMoneyCell(get("debit"), decimal);
+      const credit = parseMoneyCell(get("credit"), decimal);
+      amount = (Number.isFinite(credit) ? Math.abs(credit) : 0) - (Number.isFinite(debit) ? Math.abs(debit) : 0);
+    }
+    if (!day || !Number.isFinite(amount) || amount === 0) {
+      if (r.filter((c) => String(c).trim()).length > 2) bad++;
+      continue;
+    }
+    let purpose = get("purpose");
+    let mandate = get("mandate");
+    let creditor = get("creditor");
+    let name = (amount > 0 && get("payer")) || get("name");
+    const sepa = parseSepaTags(purpose);
+    if (sepa) {
+      purpose = sepa.purpose;
+      mandate ||= sepa.mandate;
+      creditor ||= sepa.creditor;
+      name ||= sepa.name;
+    }
+    mandate ||= purpose.match(/mandat(?:sreferenz|sref\.?|s-?ref)?:?\s+([A-Z0-9][\w./-]{2,34})/i)?.[1] || "";
+    creditor ||= purpose.match(/gl(?:ä|ae)ubiger-?(?:id|identifikation)?:?\s+([A-Z]{2}\d{2}[A-Z0-9]{3,30})/i)?.[1] || "";
+    const b = {
+      date: day, amount, name: name || purpose.slice(0, 40), purpose, category: get("category"), main: "", text: get("text"), mandate, creditor,
+      account: get("account").replace(/\s/g, "").toUpperCase() || ibanAbove, counter: get("counter").replace(/\s/g, "").toUpperCase(), generic: true,
+    };
+    if (!b.category) b.category = ruleCategory(b);
+    b.main = b.category;
+    bookings.push(b);
+  }
+  // Mostly unreadable rows: the guess is wrong, so ask.
+  if (!bookings.length || (!profile && bad > bookings.length)) throw needsMapping(info);
+  return bookings;
+}
+
+// ------------------------------------------------------------ CAMT.053
+const xmlKids = (el, name) => (el ? [...el.children].filter((c) => c.localName === name) : []);
+const xmlPath = (el, path) => path.split("/").reduce((node, name) => (node ? xmlKids(node, name)[0] || null : null), el);
+const xmlText = (el, path) => (xmlPath(el, path)?.textContent || "").trim();
+
+/** Bookings of a CAMT.053 statement (ISO 20022 XML). */
+function parseCamt(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error(tr("Die XML-Datei ist beschädigt.", "The XML file is damaged."));
+  const statements = [...doc.getElementsByTagNameNS("*", "Stmt"), ...doc.getElementsByTagNameNS("*", "Rpt")];
+  const bookings = [];
+  for (const st of statements) {
+    const account = (xmlText(st, "Acct/Id/IBAN") || xmlText(st, "Acct/Id/Othr/Id")).replace(/\s/g, "").toUpperCase();
+    for (const entry of xmlKids(st, "Ntry")) {
+      if (xmlText(entry, "Sts") && !/BOOK/.test(xmlText(entry, "Sts"))) continue;
+      const debit = xmlText(entry, "CdtDbtInd") === "DBIT";
+      const day = (xmlText(entry, "BookgDt/Dt") || xmlText(entry, "BookgDt/DtTm") || xmlText(entry, "ValDt/Dt")).slice(0, 10);
+      const details = xmlKids(xmlPath(entry, "NtryDtls"), "TxDtls");
+      const entryAmount = Number(xmlText(entry, "Amt"));
+      const parts = details.length ? details : [null];
+      for (const tx of parts) {
+        const own = tx && (xmlText(tx, "Amt") || xmlText(tx, "AmtDtls/TxAmt/Amt"));
+        const value = parts.length > 1 && own ? Number(own) : entryAmount;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(value) || !value) continue;
+        const txDebit = tx && xmlText(tx, "CdtDbtInd") ? xmlText(tx, "CdtDbtInd") === "DBIT" : debit;
+        const other = txDebit ? "Cdtr" : "Dbtr";
+        const name = tx ? (xmlText(tx, `RltdPties/${other}/Nm`) || xmlText(tx, `RltdPties/${other}/Pty/Nm`) || xmlText(tx, `RltdPties/Ultmt${other}/Nm`)) : "";
+        const purpose = tx ? xmlKids(xmlPath(tx, "RmtInf"), "Ustrd").map((u) => u.textContent.trim()).join(" ") : "";
+        const info = xmlText(entry, "AddtlNtryInf") || (tx ? xmlText(tx, "AddtlTxInf") : "");
+        const creditor = tx ? (xmlText(tx, "RltdPties/Cdtr/Id/PrvtId/Othr/Id") || xmlText(tx, "RltdPties/Cdtr/Pty/Id/PrvtId/Othr/Id") || xmlText(tx, "Refs/CdtrSchmeId/Id/PrvtId/Othr/Id")) : "";
+        const b = {
+          date: day, amount: Math.round((txDebit ? -1 : 1) * value * 100) / 100, name: name || info || purpose.slice(0, 40), purpose: purpose || info,
+          category: "", main: "", text: info, mandate: tx ? xmlText(tx, "Refs/MndtId") : "", creditor: txDebit ? creditor : "",
+          account, counter: (tx ? xmlText(tx, `RltdPties/${other}Acct/Id/IBAN`) : "").replace(/\s/g, "").toUpperCase(), generic: true,
+        };
+        b.category = ruleCategory(b);
+        b.main = b.category;
+        bookings.push(b);
+      }
+    }
+  }
+  if (!bookings.length) throw new Error(tr("In der CAMT-Datei wurden keine gebuchten Umsätze gefunden.", "No booked transactions were found in the CAMT file."));
+  return bookings;
+}
+const isCamt = (text) => /<\?xml|<Document/i.test(text.slice(0, 500)) && /BkToCstmr(Stmt|AcctRpt)/.test(text.slice(0, 5000));
+
+/** The CSV and XML files inside a ZIP (CAMT exports often come zipped). */
+async function unzipBankFiles(buffer) {
+  const view = new DataView(buffer);
+  let eocd = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 66000); i--) if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error(tr("Die ZIP-Datei ist beschädigt.", "The ZIP file is damaged."));
+  const count = view.getUint16(eocd + 10, true);
+  let p = view.getUint32(eocd + 16, true);
+  const files = [];
+  for (let n = 0; n < count && view.getUint32(p, true) === 0x02014b50; n++) {
+    const method = view.getUint16(p + 10, true);
+    const size = view.getUint32(p + 20, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const local = view.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(new Uint8Array(buffer, p + 46, nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    if (!/\.(xml|csv|txt)$/i.test(name) || name.startsWith("__MACOSX")) continue;
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const data = new Uint8Array(buffer, start, size);
+    let bytes;
+    if (method === 0) bytes = data.slice().buffer;
+    else if (method === 8) bytes = await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer();
+    else continue;
+    files.push({ name, text: decodeBankBytes(bytes) });
+  }
+  return files;
+}
+
+/** Files from the file picker as {name, text}; ZIP archives are unpacked. */
+async function readBankSources(files) {
+  const sources = [];
+  for (const f of files) {
+    const buffer = await f.arrayBuffer();
+    const head = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
+    if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4) sources.push(...(await unzipBankFiles(buffer)).map((x) => ({ name: `${f.name}/${x.name}`, text: x.text })));
+    else sources.push({ name: f.name, text: decodeBankBytes(buffer) });
+  }
+  return sources;
+}
+
+/** Bookings of one file: Outbank as before, CAMT, or any other CSV. */
+function parseBankSource(source, profiles, force = null) {
+  if (isCamt(source.text)) return { kind: "camt", bookings: parseCamt(source.text) };
+  if (!force && isOutbankCsv(source.text)) return { kind: "outbank", bookings: parseBankCsv(source.text) };
+  try {
+    return { kind: "csv", bookings: parseGenericCsv(source.text, profiles, force) };
+  } catch (err) {
+    if (force || !err.needsMapping) throw err;
+    // Whatever the earlier reader understood keeps working.
+    try {
+      return { kind: "csv", bookings: parseBankCsv(source.text) };
+    } catch (ignored) {
+      throw err;
+    }
+  }
 }
 
 const LEGAL_FORMS = /\b(gmbh( & co\.? kg)?|ag|se|kg|e\.?\s?v\.?|aktiengesellschaft|deutschland|europe|sales|mbh)\b\.?/gi;
@@ -2197,7 +2539,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       ${this._isHousehold() ? "" : `<div class="row-actions">
         <button class="secondary small" data-action="export">${tr("Exportieren", "Export")}</button>
         <button class="secondary small" data-action="import">${tr("Importieren", "Import")}</button>
-        <input type="file" accept=".json,.csv,application/json,text/csv" data-change="import-file" multiple hidden>
+        <input type="file" accept=".json,.csv,.txt,.xml,.zip,application/json,text/csv,application/xml,text/xml,application/zip" data-change="import-file" multiple hidden>
       </div>`}
       ${items.length > 5 ? `<input class="search" type="search" name="item-search" placeholder="${tr("Posten suchen …", "Search entries …")}" aria-label="${tr("Posten suchen", "Search entries")}" value="${esc(this._search || "")}">` : ""}
     </div>
@@ -2748,6 +3090,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     if (d.type === "notice") body = this._renderNotice(d);
     if (d.type === "spending") body = this._renderSpendingForm(d);
     if (d.type === "assign") body = this._renderAssignForm(d);
+    if (d.type === "csv-map") body = this._renderColumnForm(d);
     return `<div class="overlay" data-action="close-overlay"><div class="dialog" role="dialog" aria-modal="true">${body}</div></div>`;
   }
 
@@ -3019,6 +3362,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       <h2>${tr("Umsätze abgleichen", "Compare transactions")}</h2>
       <p>${tr(`„${esc(d.fileName)}“: ${d.count} Umsätze vom ${shortDate(d.from)} bis ${shortDate(d.to)}`, `“${esc(d.fileName)}”: ${d.count} transactions from ${shortDate(d.from)} to ${shortDate(d.to)}`)}${d.accounts > 1 ? tr(` auf ${d.accounts} Konten`, ` in ${d.accounts} accounts`) : ""}.
         ${d.transfers ? tr(`${d.transfers} Umbuchungen zwischen deinen Konten zählen nicht mit.`, `${d.transfers} transfers between your accounts are left out.`) : ""}
+        ${d.reread?.remap.length ? `<button type="button" class="link" data-action="csv-remap">${tr("Stimmt etwas nicht? Spalten selbst zuordnen", "Something wrong? Assign the columns yourself")}</button>` : ""}
         ${daysBetween(d.from, d.to) > 760 ? tr("Vorschläge kommen aus den letzten zwei Jahren, die ältere Historie hilft nur bei Jährlichem.", "Suggestions come from the last two years; older history only helps with yearly payments.") : ""}</p>
       <label class="check csv-ledger"><input type="checkbox" data-change="csv-ledger" ${d.saveLedger ? "checked" : ""}> ${tr(`Alle ${d.count} Umsätze für die Statistik speichern (nur in deinem Home Assistant, schon vorhandene werden übersprungen)`, `Save all ${d.count} transactions for statistics (only in your Home Assistant; existing ones are skipped)`)}</label>
       ${nothing ? `<p class="hint">${tr("Nichts Neues gefunden. Für gute Vorschläge sollte die Datei mindestens 6 bis 12 Monate abdecken.", "Nothing new found. For good suggestions the file should cover at least 6 to 12 months.")}</p>` : ""}
@@ -3159,10 +3503,111 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
   }
 
-  async _openCsv(fileNames, texts) {
+  /**
+   * Read every file; a file whose columns are unclear opens the column dialog
+   * first. `forced` holds profiles chosen in that dialog, by file index.
+   */
+  async _openBankSources(sources, forced = {}) {
+    const profiles = this._state.user.settings?.csv_profiles || {};
+    const parsed = [];
+    for (const [index, source] of sources.entries()) {
+      try {
+        parsed.push(parseBankSource(source, profiles, forced[index] || null));
+      } catch (err) {
+        if (!err.needsMapping) throw err;
+        this._openColumnDialog(sources, forced, index, err.info);
+        return;
+      }
+    }
+    // Banks without categories: what the user assigned before tells the category.
+    const history = await this._ws("bank/history");
+    const categoryOfKey = new Map();
+    for (const item of this._state.items) for (const k of history[item.id]?.bank_keys || []) if (item.schedule?.frequency !== "budget") categoryOfKey.set(k, item.category);
+    for (const p of parsed) {
+      if (p.kind === "outbank") continue;
+      for (const b of p.bookings) {
+        const known = categoryOfKey.get(bankKeyOf(b)) || categoryOfKey.get(`n:${nameKey(b.name)}|${b.amount < 0 ? "expense" : "income"}`);
+        if (known && !b.category) b.category = b.main = known;
+        // Files without an account of their own count as one account each.
+        if (!b.account && sources.length > 1) b.account = sources[parsed.indexOf(p)].name.replace(/\.[a-z]+$/i, "").slice(0, 40);
+      }
+    }
+    const remap = parsed.map((p, i) => (p.kind === "csv" ? i : -1)).filter((i) => i >= 0);
+    await this._openCsv(sources.map((x) => x.name), parsed.map((p) => p.bookings), { sources, forced, remap });
+  }
+
+  _openColumnDialog(sources, forced, index, info, manual = false) {
+    const preview = info.rows.slice(0, 60);
+    this._error = null;
+    this._dialog = {
+      type: "csv-map", sources, forced, index, rows: preview, headerRow: info.headerRow, columns: { ...info.columns },
+      date: info.date, decimal: info.decimal, name: sources[index].name, total: info.rows.length, manual,
+    };
+    this._render();
+  }
+
+  _renderColumnForm(d) {
+    const header = d.rows[d.headerRow] || [];
+    const width = Math.max(...d.rows.slice(d.headerRow, d.headerRow + 6).map((r) => r.length), 1);
+    const colName = (i) => `${tr("Spalte", "Column")} ${i + 1}${String(header[i] ?? "").trim() ? `: ${String(header[i]).trim().slice(0, 30)}` : ""}`;
+    const fields = [
+      ["date", tr("Datum", "Date"), true],
+      ["amount", tr("Betrag (mit Vorzeichen)", "Amount (signed)")],
+      ["debit", tr("oder: Ausgaben (Soll)", "or: money out (debit)")],
+      ["credit", tr("und: Einnahmen (Haben)", "and: money in (credit)")],
+      ["sign", tr("Soll/Haben-Kennzeichen (S/H)", "Debit/credit flag (S/H)")],
+      ["name", tr("Empfänger", "Payee"), true],
+      ["payer", tr("Zahler bei Einnahmen", "Payer of incoming money")],
+      ["purpose", tr("Verwendungszweck", "Purpose")],
+      ["category", tr("Kategorie", "Category")],
+      ["account", tr("Eigenes Konto", "Own account")],
+      ["mandate", tr("Mandatsreferenz", "Mandate reference")],
+      ["creditor", tr("Gläubiger-ID", "Creditor ID")],
+    ];
+    const select = ([field, label]) => `<label>${label}<select data-change="csv-map" data-field="${field}">
+        <option value="-1">—</option>
+        ${Array.from({ length: width }, (_, i) => `<option value="${i}" ${d.columns[field] === i ? "selected" : ""}>${esc(colName(i))}</option>`).join("")}
+      </select></label>`;
+    const sample = d.rows.slice(d.headerRow + 1, d.headerRow + 6);
+    let test = null;
+    try {
+      const profile = { columns: d.columns, header_row: d.headerRow, date: d.date, decimal: d.decimal };
+      test = parseGenericCsv(d.sources[d.index].text, {}, profile).slice(0, 3);
+    } catch (err) {
+      test = null;
+    }
+    return `<form data-form="csv-map">
+      <h2>${tr("Welche Spalte ist was?", "Which column is what?")}</h2>
+      <p class="hint">${d.manual ? tr(`Prüfe für „${esc(d.name)}“, welche Spalte was enthält. Die Zuordnung wird für diese Bank gemerkt.`, `Check which column of “${esc(d.name)}” holds what. The assignment is remembered for this bank.`) : tr(`„${esc(d.name)}“ kenne ich noch nicht sicher. Sag einmal, welche Spalte was enthält. Das wird für diese Bank gemerkt, der nächste Import läuft dann ohne Nachfrage.`, `I don't know “${esc(d.name)}” reliably yet. Tell me once which column holds what. It is remembered for this bank, so the next import runs without asking.`)}</p>
+      <label>${tr("Die Überschriften stehen in", "The headings are in")}<select data-change="csv-map" data-field="header_row">
+        ${d.rows.slice(0, 30).map((r, i) => `<option value="${i}" ${i === d.headerRow ? "selected" : ""}>${tr("Zeile", "line")} ${i + 1}: ${esc(r.filter((c) => String(c).trim()).slice(0, 4).join(" · ").slice(0, 60))}</option>`).join("")}
+      </select></label>
+      <div class="csv-map-table"><table><thead><tr>${Array.from({ length: width }, (_, i) => `<th>${esc(colName(i))}</th>`).join("")}</tr></thead>
+        <tbody>${sample.map((r) => `<tr>${Array.from({ length: width }, (_, i) => `<td>${esc(String(r[i] ?? "").slice(0, 40))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      <div class="grid csv-map-fields">${fields.map(select).join("")}
+        <label>${tr("Datumsformat", "Date format")}<select data-change="csv-map" data-field="date_format">
+          <option value="dmy" ${d.date === "dmy" ? "selected" : ""}>${tr("Tag.Monat.Jahr", "day.month.year")}</option>
+          <option value="mdy" ${d.date === "mdy" ? "selected" : ""}>${tr("Monat/Tag/Jahr", "month/day/year")}</option>
+          <option value="ymd" ${d.date === "ymd" ? "selected" : ""}>${tr("Jahr-Monat-Tag", "year-month-day")}</option></select></label>
+        <label>${tr("Dezimalzeichen", "Decimal mark")}<select data-change="csv-map" data-field="decimal_mark">
+          <option value="," ${d.decimal === "," ? "selected" : ""}>${tr("Komma (1.234,56)", "comma (1.234,56)")}</option>
+          <option value="." ${d.decimal === "." ? "selected" : ""}>${tr("Punkt (1,234.56)", "dot (1,234.56)")}</option></select></label>
+      </div>
+      <h3 class="csv-sub">${tr("So wird es gelesen", "This is how it reads")}</h3>
+      ${test && test.length ? `<ul class="csv-map-test">${test.map((b) => `<li><span>${shortDate(b.date)}</span><span>${esc(b.name)}</span><b class="${b.amount < 0 ? "neg" : "pos"}">${this._moneyPlain(b.amount)}</b></li>`).join("")}</ul>`
+        : `<p class="hint">${tr("Noch keine Umsätze lesbar. Wähle mindestens Datum und Betrag (oder Soll und Haben).", "No transactions readable yet. Choose at least date and amount (or debit and credit).")}</p>`}
+      ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
+      <div class="dialog-actions"><span></span><div>
+        <button type="button" class="secondary" data-action="close">${tr("Abbrechen", "Cancel")}</button>
+        <button type="submit" ${test && test.length ? "" : "disabled"}>${tr("Übernehmen und weiter", "Apply and continue")}</button>
+      </div></div>
+    </form>`;
+  }
+
+  async _openCsv(fileNames, bookingLists, reread = null) {
     const fileName = fileNames.join(", ");
     // Several accounts: one CSV each, or one CSV with several accounts.
-    const parsed = dropOwnTransfers(texts.flatMap((t) => parseBankCsv(t)));
+    const parsed = dropOwnTransfers(bookingLists.flat());
     const bookings = parsed.bookings;
     const items = this._state.items.filter((i) => i.owner === this._state.user.id);
     const from = bookings.reduce((m, b) => (b.date < m ? b.date : m), bookings[0].date);
@@ -3188,7 +3633,7 @@ class HaushaltsbuchPanel extends HTMLElement {
     }
     this._error = null;
     const accounts = new Set(bookings.map((b) => b.account).filter(Boolean)).size;
-    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, accounts, transfers: parsed.transfers, bookings, saveLedger: true, ...analysis };
+    this._dialog = { type: "csv", fileName, items, entries, history, bookingsByKey, accounts, transfers: parsed.transfers, bookings, saveLedger: true, reread, ...analysis };
     this._render();
   }
 
@@ -3198,12 +3643,12 @@ class HaushaltsbuchPanel extends HTMLElement {
     const file = files[0];
     if (!file) return;
     try {
-      const texts = await Promise.all(files.map((f) => f.text()));
-      if (files.length > 1 || /\.csv$/i.test(file.name) || !texts[0].trim().startsWith("{")) {
-        await this._openCsv(files.map((f) => f.name), texts);
+      const sources = await readBankSources(files);
+      if (files.length > 1 || !/\.json$/i.test(file.name) || !sources[0]?.text.trim().startsWith("{")) {
+        await this._openBankSources(sources);
         return;
       }
-      const text = texts[0];
+      const text = sources[0].text;
       const data = JSON.parse(text);
       if (data?.format !== "haushaltsbuch" || !Array.isArray(data.items)) throw new Error(tr("Das ist keine Export-Datei des Haushaltsbuchs.", "This is not a Household Budget export file."));
       this._error = null;
@@ -3367,6 +3812,17 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._run(() =>
         this._ws("confirm", { item_id: d.item_id, due_date: d.due, status: "booked", actual_date: f.get("actual_date") || null, actual_amount: this._parsedAmount(f.get("actual_amount"), null) })
       );
+    } else if (kind === "csv-map") {
+      const d = this._dialog;
+      const profile = { columns: { ...d.columns }, header_row: d.headerRow, date: d.date, decimal: d.decimal };
+      const signature = bankSignature(d.rows, d.headerRow);
+      const settings = this._state.user.settings || {};
+      if (signature) this._saveSpecialSettings({ csv_profiles: { ...(settings.csv_profiles || {}), [signature]: profile } });
+      const forced = { ...d.forced, [d.index]: profile };
+      this._openBankSources(d.sources, forced).catch((err) => {
+        this._error = this._errorText(err);
+        this._render();
+      });
     } else if (kind === "assign") {
       const f = new FormData(form);
       const r = this._dialog.row;
@@ -3513,6 +3969,20 @@ class HaushaltsbuchPanel extends HTMLElement {
       this._render();
     } else if (kind === "import-file") {
       this._readImportFile(el);
+    } else if (kind === "csv-map") {
+      const d = this._dialog;
+      const field = el.dataset.field;
+      if (field === "header_row") {
+        d.headerRow = Number(el.value);
+        d.columns = bankColumns(d.rows[d.headerRow] || []);
+      } else if (field === "date_format") d.date = el.value;
+      else if (field === "decimal_mark") d.decimal = el.value;
+      else if (Number(el.value) < 0) delete d.columns[field];
+      else d.columns[field] = Number(el.value);
+      const scroll = this.shadowRoot.querySelector(".dialog")?.scrollTop || 0;
+      this._render();
+      const dialog = this.shadowRoot.querySelector(".dialog");
+      if (dialog) dialog.scrollTop = scroll;
     } else if (kind === "csv-spend") {
       const d = this._dialog;
       const m = d.matches.find((x) => x.key === el.dataset.key);
@@ -3665,6 +4135,16 @@ class HaushaltsbuchPanel extends HTMLElement {
         this._statsTab = target.dataset.tab;
         this._render();
         break;
+      case "csv-remap": {
+        const { sources, forced, remap } = this._dialog.reread;
+        const index = remap[0];
+        const info = guessBankLayout(sources[index].text);
+        const profile = forced[index] || (this._state.user.settings?.csv_profiles || {})[bankSignature(info.rows, info.headerRow)];
+        if (profile) Object.assign(info, { headerRow: profile.header_row, columns: { ...profile.columns }, date: profile.date || info.date, decimal: profile.decimal || info.decimal });
+        info.headerRow = Math.max(0, info.headerRow);
+        this._openColumnDialog(sources, forced, index, info, true);
+        break;
+      }
       case "stats-period": {
         const p = target.dataset.period;
         const rows = this._ledger?.rows || [];
@@ -4224,6 +4704,14 @@ const STYLES = `
   .stats-bookings li { padding: 4px 0; border-top: 1px solid var(--divider-color); }
   .stats-bookings .csv-detail-head .what { margin-left: auto; color: var(--secondary-text-color); }
   button.link { background: none; border: none; padding: 4px 0; color: var(--primary-color); cursor: pointer; font: inherit; }
+  .csv-map-table { overflow-x: auto; margin: 8px 0 12px; border: 1px solid var(--divider-color); border-radius: 8px; }
+  .csv-map-table table { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+  .csv-map-table th, .csv-map-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--divider-color); }
+  .csv-map-table th { background: var(--secondary-background-color); font-weight: 600; }
+  .csv-map-fields label { font-size: 13px; }
+  .csv-map-test { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+  .csv-map-test li { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 8px; padding: 4px 0; border-top: 1px solid var(--divider-color); }
+  .csv-map-test li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Statistics */
   .st-top { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
   .st-pills { display: inline-flex; background: var(--secondary-background-color); border-radius: 999px; padding: 3px; }

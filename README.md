@@ -329,7 +329,12 @@ Tab **Posten** → **Importieren** nimmt neben der Export-Datei auch CSV-Dateien
 - **Als Budget anlegen?** Häufige Kartenzahlungen einer Kategorie (z.B. Lebensmittel) als Budget pro Monat.
 - Umbuchungen zwischen deinen eigenen Konten zählen nicht mit. Vorschläge kommen aus den letzten zwei Jahren, ältere Umsätze helfen nur bei Jährlichem.
 
-Erkannt werden u.a. die Spalten Datum, Betrag, Name/Empfänger, Verwendungszweck, Kategorie, Konto, Mandatsreferenz und Gläubiger-ID, mit Semikolon oder Komma getrennt.
+**Welche Dateien gehen?**
+
+- **CSV jeder Bank:** Die Kopfzeile wird auch unter einem Vorspann gefunden, Soll/Haben-Spalten, S/H-Kennzeichen, deutsche und englische Zahlen- und Datumsformate sowie alte Windows-Zeichensätze werden erkannt. Mandatsreferenz und Gläubiger-ID werden auch aus dem Verwendungszweck gelesen (EREF+, MREF+, CRED+, SVWZ+). Liefert die Bank keine Kategorien, vergibt das Haushaltsbuch eigene.
+- **Spalten selbst zuordnen:** Erkennt das Haushaltsbuch eine Datei nicht sicher, fragt es einmal „Welche Spalte ist was?“ und merkt sich die Antwort für diese Bank. Über **Stimmt etwas nicht? Spalten selbst zuordnen** im Abgleich geht das auch jederzeit von Hand.
+- **CAMT.053:** Fast jede deutsche Bank bietet diesen genormten Export an (oft „CAMT“ oder „ISO 20022“). Er ist am eindeutigsten, auch als ZIP-Datei.
+- **Outbank:** Der CSV-Export von Outbank wird wie bisher gelesen, mit Kategorien.
 
 ## Statistik
 

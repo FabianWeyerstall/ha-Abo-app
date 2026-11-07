@@ -108,11 +108,13 @@ class Book:
             raise ValidationError("stats_ignored")
         # payees marked "is fine" in the statistics (e.g. no forgotten subscription)
         ignored = list(dict.fromkeys(str(k)[:120] for k in ignored if k))[-300:]
+        profiles = _clean_csv_profiles(settings.get("csv_profiles"))
         self.user(user_id)["settings"] = {
             "special_min_months": min_months,
             "special_min_amount": min_amount,
             "salary_item_id": salary,
             "stats_ignored": ignored,
+            "csv_profiles": profiles,
         }
 
     def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:
@@ -770,6 +772,47 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         "contract": contract,
         "bank_keys": _clean_bank_keys(values.get("bank_keys")),
     }
+
+
+CSV_PROFILE_FIELDS = {
+    "date", "amount", "debit", "credit", "sign", "name", "payer", "purpose", "category",
+    "account", "mandate", "creditor", "counter", "text",
+}
+CSV_PROFILE_FORMATS = {"date": {"dmy", "mdy", "ymd"}, "decimal": {",", "."}}
+
+
+def _clean_csv_profiles(values: Any) -> dict[str, dict[str, Any]]:
+    """Column assignments of bank CSV files the user mapped by hand, keyed by header line."""
+    if values is None:
+        return {}
+    if not isinstance(values, dict):
+        raise ValidationError("csv_profiles")
+    result: dict[str, dict[str, Any]] = {}
+    for signature, profile in list(values.items())[-20:]:
+        if not isinstance(profile, dict):
+            raise ValidationError("csv_profiles")
+        columns = profile.get("columns") or {}
+        if not isinstance(columns, dict):
+            raise ValidationError("csv_profiles")
+        clean: dict[str, Any] = {"columns": {}}
+        for field, index in columns.items():
+            if field not in CSV_PROFILE_FIELDS:
+                raise ValidationError("csv_profiles")
+            try:
+                index = int(index)
+            except (TypeError, ValueError) as err:
+                raise ValidationError("csv_profiles") from err
+            if 0 <= index < 300:
+                clean["columns"][field] = index
+        try:
+            clean["header_row"] = max(0, min(100, int(profile.get("header_row") or 0)))
+        except (TypeError, ValueError) as err:
+            raise ValidationError("csv_profiles") from err
+        for key, allowed in CSV_PROFILE_FORMATS.items():
+            if profile.get(key) in allowed:
+                clean[key] = profile[key]
+        result[str(signature)[:300]] = clean
+    return result
 
 
 def _clean_bank_keys(values: Any) -> list[str]:

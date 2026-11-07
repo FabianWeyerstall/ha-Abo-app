@@ -319,7 +319,12 @@ Tab **Entries** → **Import** also takes CSV files of transactions from your ba
 - **Create as a budget?** Frequent card payments of one category (e.g. groceries) as a monthly budget.
 - Transfers between your own accounts are left out. Suggestions come from the last two years; older transactions only help with yearly payments.
 
-Recognised columns include date, amount, name/payee, purpose, category, account, mandate reference and creditor ID, separated by semicolon or comma.
+**Which files work?**
+
+- **CSV from any bank:** the header line is found even below a preamble; debit/credit columns, S/H flags, German and English number and date formats and old Windows character sets are recognised. Mandate reference and creditor ID are also read from the purpose (EREF+, MREF+, CRED+, SVWZ+). If the bank provides no categories, the Household Budget assigns its own.
+- **Assign columns yourself:** if a file is not recognised reliably, you are asked once “Which column is what?” and the answer is remembered for that bank. **Something wrong? Assign the columns yourself** in the comparison does this by hand at any time.
+- **CAMT.053:** the standardised export most banks offer (often “CAMT” or “ISO 20022”). It is the most precise, also as a ZIP file.
+- **Outbank:** Outbank's CSV export is read as before, with categories.
 
 ## Statistics
 
