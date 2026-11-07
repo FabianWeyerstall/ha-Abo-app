@@ -1986,6 +1986,25 @@ class HaushaltsbuchPanel extends HTMLElement {
     </form>`;
   }
 
+  /** The assign dialog with a sensible preselection and "remember" only for clear payees. */
+  _assignDialog(r, current) {
+    const direction = r[1] < 0 ? "expense" : "income";
+    const key = `n:${nameKey(r[2] || "")}|${direction}`;
+    const history = this._bankHistory || {};
+    const items = this._state.items.filter((i) => i.direction === direction);
+    let target = items.find((i) => (history[i.id]?.bank_keys || []).includes(key))?.id;
+    if (!target) {
+      const plain = items.filter((i) => !["budget", "once"].includes(i.schedule?.frequency));
+      target = bestItem(plain, direction, r[2] || "", r[6] || "", r[4] || r[3] || "", Math.abs(r[1]), Number(r[0].slice(8)), [Math.abs(r[1])])?.id;
+    }
+    // A payee with transactions of different kinds (e.g. your own name on loan
+    // payments and transfers) must not be assigned automatically next time.
+    const same = (this._ledger?.rows || []).filter((x) => nameKey(x[2] || "") === nameKey(r[2] || "") && (x[1] < 0) === (r[1] < 0));
+    const kinds = new Set(same.map((x) => x[4] || x[3] || ""));
+    const mixed = kinds.size > 1 || !nameKey(r[2] || "");
+    return { type: "assign", row: r, current, target: target || "", mixed };
+  }
+
   _renderAssignForm(d) {
     const r = d.row;
     const direction = r[1] < 0 ? "expense" : "income";
@@ -1998,14 +2017,16 @@ class HaushaltsbuchPanel extends HTMLElement {
       <div class="assign-row"><b>${this._moneyPlain(r[1])}</b> · ${fmtDate(r[0])}<br>${esc(r[2] || "?")}<div class="hint">${esc([r[4] || r[3], r[6]].filter(Boolean).join(" · "))}</div></div>
       ${d.current ? `<p class="hint">${tr(`Schon zugeordnet zu „${esc(d.current)}“. Eine weitere Zuordnung kommt dazu, die alte bleibt. Falsche Budget-Ausgaben löschst du im Budget.`, `Already assigned to “${esc(d.current)}”. Another assignment is added; the old one stays. Remove wrong budget spendings in the budget.`)}</p>` : ""}
       <div class="grid">
-        <label class="full">${tr("Gehört zu", "Belongs to")}<select name="target">
+        <label class="full">${tr("Gehört zu", "Belongs to")}<select name="target" required>
+          <option value="" disabled ${d.target ? "" : "selected"}>${tr("Bitte wählen", "Please choose")}</option>
           ${budgets.length ? `<optgroup label="${tr("Budgets", "Budgets")}">${budgets.map(option).join("")}</optgroup>` : ""}
           ${regular.length ? `<optgroup label="${tr("Posten", "Entries")}">${regular.map(option).join("")}</optgroup>` : ""}
-          <option value="once" ${d.target === "once" || !items.length ? "selected" : ""}>${tr("Neuer einmaliger Posten", "New one-off entry")}</option>
+          <option value="once" ${d.target === "once" ? "selected" : ""}>${tr("Neuer einmaliger Posten", "New one-off entry")}</option>
         </select></label>
         <label class="full">${tr("Name, falls neuer Posten", "Name, if new entry")}<input name="name" maxlength="80" value="${esc(r[2] || "")}"></label>
       </div>
-      <label class="check"><input type="checkbox" name="remember" checked> ${tr(`Beim nächsten Import Umsätze von „${esc(r[2] || "?")}“ automatisch so zuordnen`, `Assign transactions from “${esc(r[2] || "?")}” like this on the next import`)}</label>
+      <label class="check"><input type="checkbox" name="remember" ${d.mixed ? "" : "checked"}> ${tr(`Beim nächsten Import Umsätze von „${esc(r[2] || "?")}“ automatisch so zuordnen`, `Assign transactions from “${esc(r[2] || "?")}” like this on the next import`)}</label>
+      ${d.mixed ? `<p class="hint">${tr(`Von „${esc(r[2] || "?")}“ gibt es verschiedene Arten von Umsätzen. Deshalb ist das Häkchen aus.`, `“${esc(r[2] || "?")}” has different kinds of transactions, so this is off.`)}</p>` : ""}
       <p class="hint">${tr("Budget: wird als Ausgabe mit diesem Datum eingetragen. Posten: hakt den nächstgelegenen offenen Termin mit echtem Datum und Betrag ab.", "Budget: added as a spending on this date. Entry: confirms the nearest open date with the real date and amount.")}</p>
       ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
       <div class="dialog-actions"><span></span><div>
@@ -3348,8 +3369,13 @@ class HaushaltsbuchPanel extends HTMLElement {
           const around = await this._ws("forecast", { scope, start: iso(addDays(day, -45)), end: iso(addDays(day, 45)) });
           const open = around.days.flatMap((x) => x.entries).filter((e) => e.item_id === item.id && e.status === null)
             .sort((a, b) => Math.abs(daysBetween(a.date, r[0])) - Math.abs(daysBetween(b.date, r[0])))[0];
-          if (!open) throw new Error(tr(`„${item.name}“ hat um den ${shortDate(r[0])} keinen offenen Termin.`, `“${item.name}” has no open date around ${shortDate(r[0])}.`));
-          sync.confirmations.push({ item_id: item.id, due_date: open.due_date, actual_date: r[0], actual_amount: amount });
+          if (open) sync.confirmations.push({ item_id: item.id, due_date: open.due_date, actual_date: r[0], actual_amount: amount });
+          else if (!(item.confirmations || []).some((c) => c.actual_date === r[0] && Math.abs((c.actual_amount ?? -1) - amount) < 0.01)) {
+            // No open date nearby (e.g. before the entry started, or that month is already
+            // booked): keep the payment as a booking on its own date so it counts as assigned.
+            if ((item.confirmations || []).some((c) => c.due_date === r[0])) throw new Error(tr(`„${item.name}“ hat am ${shortDate(r[0])} schon eine andere Buchung.`, `“${item.name}” already has another booking on ${shortDate(r[0])}.`));
+            sync.confirmations.push({ item_id: item.id, due_date: r[0], actual_date: r[0], actual_amount: amount });
+          }
         }
         if (f.get("remember") && item.editable !== false) sync.keys.push({ item_id: item.id, key: `n:${nameKey(r[2] || "")}|${direction}` });
         await this._ws("bank/sync", sync);
@@ -3696,7 +3722,7 @@ class HaushaltsbuchPanel extends HTMLElement {
       }
       case "ledger-assign":
         this._error = null;
-        this._dialog = { type: "assign", row: this._ledger.rows[Number(target.dataset.row)], current: target.dataset.current || "" };
+        this._dialog = this._assignDialog(this._ledger.rows[Number(target.dataset.row)], target.dataset.current || "");
         this._render();
         break;
       case "stats-month":
