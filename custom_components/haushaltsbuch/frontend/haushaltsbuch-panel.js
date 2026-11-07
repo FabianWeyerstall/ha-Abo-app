@@ -1316,8 +1316,10 @@ class HaushaltsbuchPanel extends HTMLElement {
     for (const [id, h] of Object.entries(this._bankHistory || {})) {
       for (const [date, amount] of [...(h.spendings || []), ...(h.booked || [])]) if (amount != null && itemNames[id]) assignedTo.set(`${date}|${Number(amount).toFixed(2)}`, itemNames[id]);
     }
+    const keyOwner = new Map();
+    for (const [id, h] of Object.entries(this._bankHistory || {})) for (const k of h.bank_keys || []) if (itemNames[id] && k.startsWith("n:")) keyOwner.set(k, itemNames[id]);
     const assignChip = (r) => {
-      const name = assignedTo.get(`${r[0]}|${Math.abs(r[1]).toFixed(2)}`);
+      const name = assignedTo.get(`${r[0]}|${Math.abs(r[1]).toFixed(2)}`) || keyOwner.get(`n:${nameKey(r[2] || "")}|${r[1] < 0 ? "expense" : "income"}`);
       return `<button class="assign-chip ${name ? "set" : ""}" data-action="ledger-assign" data-row="${indexOf.get(r)}" data-current="${esc(name || "")}">${name ? `→ ${esc(name)}` : tr("zuordnen", "assign")}</button>`;
     };
 
@@ -1614,19 +1616,36 @@ class HaushaltsbuchPanel extends HTMLElement {
     ).replace(/<\/div>$/, () => `${hiddenBlock}</div>`);
 
     // 2. How the price of regular payments developed over the years.
-    const prices = [];
+    // Payees assigned to the same entry (e.g. electricity from several providers
+    // over the years) form one line.
+    const priceGroups = new Map();
     for (const x of regular) {
-      if (x.last.direction !== "expense" || daysBetween(x.last.date, lastDate) > 400) continue;
-      const usual = median(x.g.list.map((b) => Math.abs(b.amount)));
+      if (x.last.direction !== "expense") continue;
+      const id = x.item && byKey.get(x.g.key) === x.item ? `i:${x.item.id}` : x.g.key;
+      const pg = priceGroups.get(id) || { name: x.item && id.startsWith("i:") ? x.item.name : x.item?.name || (x.now || x.ever).name, list: [], payees: new Set() };
+      pg.list.push(...x.g.list);
+      pg.payees.add(x.last.name);
+      priceGroups.set(id, pg);
+    }
+    const prices = [];
+    for (const pg of priceGroups.values()) {
+      pg.list.sort((a, b) => a.date.localeCompare(b.date));
+      if (daysBetween(pg.list[pg.list.length - 1].date, lastDate) > 400) continue;
       const perYear = {};
-      for (const b of x.g.list) if (Math.abs(Math.abs(b.amount) - usual) <= usual * 0.6) (perYear[b.date.slice(0, 4)] ||= []).push(Math.abs(b.amount));
+      // Each year against its own typical amount, so a cheaper former provider still counts.
+      const byYear = {};
+      for (const b of pg.list) (byYear[b.date.slice(0, 4)] ||= []).push(Math.abs(b.amount));
+      for (const [y, list] of Object.entries(byYear)) {
+        const typical = median(list);
+        perYear[y] = list.filter((v) => Math.abs(v - typical) <= typical * 0.6);
+      }
       const ys = Object.keys(perYear).sort();
       if (ys.length < 2) continue;
       const first = median(perYear[ys[0]]);
       const latest = median(perYear[ys[ys.length - 1]]);
       const pct = Math.round(((latest - first) / first) * 100);
       if (Math.abs(pct) < 3) continue;
-      prices.push({ name: x.item?.name || (x.now || x.ever).name, from: ys[0], to: ys[ys.length - 1], first, latest, pct, steps: ys.map((y) => [y, median(perYear[y])]) });
+      prices.push({ name: pg.name, payees: pg.payees.size, from: ys[0], to: ys[ys.length - 1], first, latest, pct, steps: ys.map((y) => [y, median(perYear[y])]) });
     }
     prices.sort((a, b) => Math.abs(b.latest - b.first) * 12 - Math.abs(a.latest - a.first) * 12);
     const priceCard = card(
@@ -1636,7 +1655,7 @@ class HaushaltsbuchPanel extends HTMLElement {
         ? `<div class="insight-list">${prices.slice(0, 12).map((p) => `<details class="insight-price"><summary>
             <span class="entry-name">${esc(p.name)}</span>
             <span class="insight-change">${money(p.first)} → ${money(p.latest)} <span class="delta ${p.pct > 0 ? "neg" : "pos"}">${p.pct > 0 ? "+" : ""}${p.pct} %</span></span>
-            <span class="hint">${p.from}–${p.to}</span></summary>
+            <span class="hint">${p.from}–${p.to}${p.payees > 1 ? tr(` · ${p.payees} Anbieter`, ` · ${p.payees} providers`) : ""}</span></summary>
             <div class="insight-steps">${p.steps.map(([y, v]) => `<span>${y}: ${money(v)}</span>`).join("")}</div></details>`).join("")}</div>`
         : empty(tr("Keine Preisänderungen bei laufenden Verträgen gefunden.", "No price changes found in running contracts.")),
     );
@@ -2025,7 +2044,8 @@ class HaushaltsbuchPanel extends HTMLElement {
         </select></label>
         <label class="full">${tr("Name, falls neuer Posten", "Name, if new entry")}<input name="name" maxlength="80" value="${esc(r[2] || "")}"></label>
       </div>
-      <label class="check"><input type="checkbox" name="remember" ${d.mixed ? "" : "checked"}> ${tr(`Beim nächsten Import Umsätze von „${esc(r[2] || "?")}“ automatisch so zuordnen`, `Assign transactions from “${esc(r[2] || "?")}” like this on the next import`)}</label>
+      <label class="check"><input type="checkbox" name="remember" ${d.mixed ? "" : "checked"}> ${tr(`Alle Umsätze von „${esc(r[2] || "?")}“ gehören dazu, auch frühere und künftige`, `All transactions from “${esc(r[2] || "?")}” belong to it, past and future`)}</label>
+      <p class="hint">${tr("So kannst du auch alte Anbieter dem heutigen Posten zuordnen, z. B. den früheren Stromanbieter dem Posten Strom. Die Preisentwicklung zeigt dann alles in einer Zeile.", "This also lets you assign old providers to today's entry, e.g. the former electricity provider to Electricity. Price changes then show everything in one line.")}</p>
       ${d.mixed ? `<p class="hint">${tr(`Von „${esc(r[2] || "?")}“ gibt es verschiedene Arten von Umsätzen. Deshalb ist das Häkchen aus.`, `“${esc(r[2] || "?")}” has different kinds of transactions, so this is off.`)}</p>` : ""}
       <p class="hint">${tr("Budget: wird als Ausgabe mit diesem Datum eingetragen. Posten: hakt den nächstgelegenen offenen Termin mit echtem Datum und Betrag ab.", "Budget: added as a spending on this date. Entry: confirms the nearest open date with the real date and amount.")}</p>
       ${this._error ? `<div class="error">${esc(this._error)}</div>` : ""}
@@ -3370,7 +3390,7 @@ class HaushaltsbuchPanel extends HTMLElement {
           const open = around.days.flatMap((x) => x.entries).filter((e) => e.item_id === item.id && e.status === null)
             .sort((a, b) => Math.abs(daysBetween(a.date, r[0])) - Math.abs(daysBetween(b.date, r[0])))[0];
           if (open) sync.confirmations.push({ item_id: item.id, due_date: open.due_date, actual_date: r[0], actual_amount: amount });
-          else if (!(item.confirmations || []).some((c) => c.actual_date === r[0] && Math.abs((c.actual_amount ?? -1) - amount) < 0.01)) {
+          else if (!(f.get("remember") && item.editable !== false) && !(item.confirmations || []).some((c) => c.actual_date === r[0] && Math.abs((c.actual_amount ?? -1) - amount) < 0.01)) {
             // No open date nearby (e.g. before the entry started, or that month is already
             // booked): keep the payment as a booking on its own date so it counts as assigned.
             if ((item.confirmations || []).some((c) => c.due_date === r[0])) throw new Error(tr(`„${item.name}“ hat am ${shortDate(r[0])} schon eine andere Buchung.`, `“${item.name}” already has another booking on ${shortDate(r[0])}.`));
