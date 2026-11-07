@@ -3550,24 +3550,34 @@ class HaushaltsbuchPanel extends HTMLElement {
     const header = d.rows[d.headerRow] || [];
     const width = Math.max(...d.rows.slice(d.headerRow, d.headerRow + 6).map((r) => r.length), 1);
     const colName = (i) => `${tr("Spalte", "Column")} ${i + 1}${String(header[i] ?? "").trim() ? `: ${String(header[i]).trim().slice(0, 30)}` : ""}`;
+    // [field, label, need, example]; need: "must", "one" (amount or debit/credit), "good" or "".
     const fields = [
-      ["date", tr("Datum", "Date"), true],
-      ["amount", tr("Betrag (mit Vorzeichen)", "Amount (signed)")],
-      ["debit", tr("oder: Ausgaben (Soll)", "or: money out (debit)")],
-      ["credit", tr("und: Einnahmen (Haben)", "and: money in (credit)")],
-      ["sign", tr("Soll/Haben-Kennzeichen (S/H)", "Debit/credit flag (S/H)")],
-      ["name", tr("Empfänger", "Payee"), true],
-      ["payer", tr("Zahler bei Einnahmen", "Payer of incoming money")],
-      ["purpose", tr("Verwendungszweck", "Purpose")],
-      ["category", tr("Kategorie", "Category")],
-      ["account", tr("Eigenes Konto", "Own account")],
-      ["mandate", tr("Mandatsreferenz", "Mandate reference")],
-      ["creditor", tr("Gläubiger-ID", "Creditor ID")],
+      ["date", tr("Datum", "Date"), "must", tr("z. B. 04.11.2026 oder 2026-11-04, meist „Buchungstag“", "e.g. 04.11.2026 or 2026-11-04, often “booking date”")],
+      ["amount", tr("Betrag", "Amount"), "one", tr("z. B. -74,00 für eine Abbuchung, 2.700,00 für Gehalt", "e.g. -74.00 for a debit, 2,700.00 for salary")],
+      ["debit", tr("Ausgaben (Soll)", "Money out (debit)"), "pair", tr("nur wenn die Bank Ausgaben und Einnahmen in zwei Spalten trennt, z. B. 74,00", "only if the bank splits money out and in into two columns, e.g. 74.00")],
+      ["credit", tr("Einnahmen (Haben)", "Money in (credit)"), "pair", tr("die zweite dieser Spalten, z. B. 2.700,00", "the second of these columns, e.g. 2,700.00")],
+      ["sign", tr("Soll/Haben-Kennzeichen", "Debit/credit flag"), "", tr("nur bei Beträgen ohne Minus: S oder H, Soll oder Haben", "only for amounts without minus: S or H, debit or credit")],
+      ["name", tr("Empfänger", "Payee"), "good", tr("wer das Geld bekommt, z. B. Stadtwerke Musterstadt", "who gets the money, e.g. Stadtwerke Musterstadt")],
+      ["payer", tr("Zahler bei Einnahmen", "Payer of incoming money"), "", tr("nur wenn die Bank dafür eine eigene Spalte hat, z. B. dein Arbeitgeber", "only if the bank has a column of its own for it, e.g. your employer")],
+      ["purpose", tr("Verwendungszweck", "Purpose"), "good", tr("z. B. Abschlag Strom Vertragskonto 998877", "e.g. electricity instalment contract 998877")],
+      ["category", tr("Kategorie", "Category"), "", tr("falls die Bank Kategorien liefert, z. B. Lebensmittel", "if the bank provides categories, e.g. groceries")],
+      ["account", tr("Eigenes Konto", "Own account"), "", tr("deine IBAN, wichtig bei mehreren Konten in einer Datei", "your IBAN, matters with several accounts in one file")],
+      ["mandate", tr("Mandatsreferenz", "Mandate reference"), "", tr("bei Lastschriften, z. B. SW-998877", "for direct debits, e.g. SW-998877")],
+      ["creditor", tr("Gläubiger-ID", "Creditor ID"), "", tr("bei Lastschriften, z. B. DE33ZZZ00000000003", "for direct debits, e.g. DE33ZZZ00000000003")],
     ];
-    const select = ([field, label]) => `<label>${label}<select data-change="csv-map" data-field="${field}">
-        <option value="-1">—</option>
-        ${Array.from({ length: width }, (_, i) => `<option value="${i}" ${d.columns[field] === i ? "selected" : ""}>${esc(colName(i))}</option>`).join("")}
-      </select></label>`;
+    const needLabel = { must: tr("Pflicht", "required"), one: tr("Pflicht, oder Soll + Haben", "required, or debit + credit"), pair: tr("statt Betrag", "instead of amount"), good: tr("empfohlen", "recommended"), "": tr("optional", "optional") };
+    const firstRow = d.rows[d.headerRow + 1] || [];
+    const select = ([field, label, need, example]) => {
+      const col = d.columns[field];
+      const value = col !== undefined && col >= 0 ? String(firstRow[col] ?? "").trim() : "";
+      return `<label class="csv-map-field"><span class="csv-map-label">${label} <span class="csv-need ${need || "opt"}">${needLabel[need]}</span></span>
+        <select data-change="csv-map" data-field="${field}">
+          <option value="-1">—</option>
+          ${Array.from({ length: width }, (_, i) => `<option value="${i}" ${col === i ? "selected" : ""}>${esc(colName(i))}</option>`).join("")}
+        </select>
+        <span class="csv-map-example">${esc(example)}</span>
+        ${value ? `<span class="csv-map-value">${tr("in deiner Datei", "in your file")}: ${esc(value.slice(0, 60))}</span>` : ""}</label>`;
+    };
     const sample = d.rows.slice(d.headerRow + 1, d.headerRow + 6);
     let test = null;
     try {
@@ -4709,6 +4719,13 @@ const STYLES = `
   .csv-map-table th, .csv-map-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--divider-color); }
   .csv-map-table th { background: var(--secondary-background-color); font-weight: 600; }
   .csv-map-fields label { font-size: 13px; }
+  .csv-map-field { display: flex; flex-direction: column; gap: 2px; }
+  .csv-map-label { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .csv-need { font-size: 11px; border-radius: 6px; padding: 0 6px; background: var(--secondary-background-color); color: var(--secondary-text-color); }
+  .csv-need.must, .csv-need.one { background: color-mix(in srgb, var(--error-color, #db4437) 14%, transparent); color: var(--error-color, #db4437); }
+  .csv-need.good { background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
+  .csv-map-example { font-size: 12px; color: var(--secondary-text-color); }
+  .csv-map-value { font-size: 12px; color: var(--primary-text-color); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .csv-map-test { list-style: none; padding: 0; margin: 0; font-size: 13px; }
   .csv-map-test li { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 8px; padding: 4px 0; border-top: 1px solid var(--divider-color); }
   .csv-map-test li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
