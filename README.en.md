@@ -296,7 +296,7 @@ Every Home Assistant user has their own private entries and balance. If you like
 <img src="https://raw.githubusercontent.com/FabianWeyerstall/ha-haushaltsbuch/main/docs/images/en/11-household.png" alt="Household" width="260">
 
 - Only the owner can change an entry; members can confirm shared bookings.
-- HA admins cannot see other users' private entries either.
+- HA admins cannot see other users' private entries in the panel either. (Backups do contain everyone's data, which is why only admins can use them.)
 - Optional per household: a **calendar** entity and **sensors** (next expense, next income, balance at month end) for dashboards and automations. These entities are visible to all HA users and therefore off by default.
 
 Tab **Household** → **+ Add household**, give it a name and select members. Then pick the household under **Visible to** when editing an entry. Switch between *My entries* and the household at the top right.
@@ -304,6 +304,31 @@ Tab **Household** → **+ Add household**, give it a name and select members. Th
 ## Backup and move
 
 Tab **Entries** → **Export** saves your own entries as a JSON file. **Import** reads such a file, either in addition to existing entries (duplicates are skipped) or as a replacement. Imported entries are private at first.
+
+### Backups and restore
+
+Tab **Household** → **Backups** (HA admins only): **Back up now** saves everything, i.e. entries, households, balances and the statistics transactions, for all users. A backup is also made automatically before every CSV import and every restore. The last 30 are kept as JSON in `/config/haushaltsbuch_backups`, so they are part of normal Home Assistant backups too. Each backup can be **downloaded** or **restored**, and **Restore from file …** takes a downloaded one.
+
+## Importing transactions from your banking app (CSV)
+
+Tab **Entries** → **Import** also takes CSV files of transactions from your banking app, several at once (one per account). The file is only read in the browser; nothing is saved until you apply the dialog.
+
+- **New regular payments** (salary, rent, insurance, subscriptions …) are suggested with schedule, next date and certainty. Payments that stopped months ago (old flat, cancelled contract) are not suggested.
+- **Matches your entries:** bookings of existing entries are confirmed with their real date and amount, card payments become spendings of the matching budget. If the amount changed for good, a price change is offered. The book remembers which direct debit belongs to which entry.
+- **Rare or irregular:** yearly fees, annual statements (back payment or refund) and rolling entries like the hairdresser, not ticked at first.
+- **Create as a budget?** Frequent card payments of one category (e.g. groceries) as a monthly budget.
+- Transfers between your own accounts are left out. Suggestions come from the last two years; older transactions only help with yearly payments.
+
+**Which files work?**
+
+- **CSV from any bank:** the header line is found even below a preamble; debit/credit columns, S/H flags, German and English number and date formats and old Windows character sets are recognised. Mandate reference and creditor ID are also read from the purpose (EREF+, MREF+, CRED+, SVWZ+). If the bank provides no categories, the Household Budget assigns its own.
+- **Assign columns yourself:** if a file is not recognised reliably, you are asked once “Which column is what?” and the answer is remembered for that bank. **Something wrong? Assign the columns yourself** in the comparison does this by hand at any time.
+- **CAMT.053:** the standardised export most banks offer (often “CAMT” or “ISO 20022”). It is the most precise, also as a ZIP file.
+- **Outbank:** Outbank's CSV export is read as before, with categories.
+
+## Statistics
+
+When importing a CSV you can **save all transactions for statistics**. They are kept in a separate file in your Home Assistant (`.storage/haushaltsbuch.ledger`) and only you can see them. The **Statistics** tab shows per year or for all years: income, spending, what is left (compared with the year before; in the running year with the same period), the history per year or month and spending by category with sub categories and biggest payees. For all years, each category shows how it developed from the first to the last full year. **Delete all** removes the saved transactions.
 
 ## Incognito mode
 

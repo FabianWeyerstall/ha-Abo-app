@@ -73,6 +73,7 @@ ITEM_FIELDS = {
     "household_id",
     "price_changes",
     "contract",
+    "bank_keys",
 }
 
 
@@ -102,10 +103,18 @@ class Book:
         salary = settings.get("salary_item_id") or None
         if salary not in self.data["items"]:
             salary = None  # unknown or deleted item: back to calendar months
+        ignored = settings.get("stats_ignored") or []
+        if not isinstance(ignored, list):
+            raise ValidationError("stats_ignored")
+        # payees marked "is fine" in the statistics (e.g. no forgotten subscription)
+        ignored = list(dict.fromkeys(str(k)[:120] for k in ignored if k))[-300:]
+        profiles = _clean_csv_profiles(settings.get("csv_profiles"))
         self.user(user_id)["settings"] = {
             "special_min_months": min_months,
             "special_min_amount": min_amount,
             "salary_item_id": salary,
+            "stats_ignored": ignored,
+            "csv_profiles": profiles,
         }
 
     def set_user_balance(self, user_id: str, balance: float, balance_date: str) -> None:
@@ -228,6 +237,9 @@ class Book:
             item_id = uuid4().hex
             item = {"id": item_id, "owner": user_id, "confirmations": []}
         cleaned = _validate_item({k: v for k, v in values.items() if k in ITEM_FIELDS})
+        if "bank_keys" not in values:
+            # The item form does not know them; keep what the bank import learned.
+            cleaned["bank_keys"] = item.get("bank_keys") or []
         if cleaned.get("household_id"):
             self.household(user_id, cleaned["household_id"])
         item.update(cleaned)
@@ -340,6 +352,97 @@ class Book:
         # About a year of shopping is plenty for the current and past months.
         item["spendings"] = spendings[-1000:]
         return spending_id
+
+    # ------------------------------------------------------------ bank import
+    def bank_history(self, user_id: str) -> dict[str, Any]:
+        """What a bank CSV import needs to know to avoid doing things twice."""
+        return {
+            item["id"]: {
+                "bank_keys": item.get("bank_keys") or [],
+                "confirmed": [c["due_date"] for c in item.get("confirmations") or []],
+                "spendings": [[s["date"], s["amount"]] for s in item.get("spendings") or []],
+                "booked": [
+                    [c["actual_date"], c.get("actual_amount")]
+                    for c in item.get("confirmations") or []
+                    if c.get("actual_date")
+                ],
+            }
+            for item in self.visible_items(user_id)
+        }
+
+    def bank_sync(self, user_id: str, payload: dict[str, Any]) -> dict[str, int]:
+        """Apply the result of comparing a bank CSV with the existing items.
+
+        Confirms bookings, adds budget spendings, remembers bank keys and adds
+        price changes. Everything is checked first; bookings and spendings
+        that are already there are skipped.
+        """
+        def visible(item_id: Any, own: bool = False) -> dict[str, Any]:
+            item = self.data["items"].get(item_id)
+            if item is None or not self.can_see(user_id, item) or (own and item["owner"] != user_id):
+                raise AccessError("item")
+            return item
+
+        confirmations = []
+        for c in payload.get("confirmations") or []:
+            item = visible(c.get("item_id"))
+            _check_date(c.get("due_date"), "due_date")
+            _check_date(c.get("actual_date"), "actual_date")
+            try:
+                amount = round(abs(float(c.get("actual_amount"))), 2)
+            except (TypeError, ValueError) as err:
+                raise ValidationError("amount") from err
+            confirmations.append((item, c["due_date"], c["actual_date"], amount))
+        spendings = []
+        for x in payload.get("spendings") or []:
+            item = visible(x.get("item_id"))
+            if (item.get("schedule") or {}).get("frequency") != "budget":
+                raise ValidationError("not_a_budget")
+            _check_date(x.get("date"), "date")
+            try:
+                amount = round(abs(float(x.get("amount"))), 2)
+            except (TypeError, ValueError) as err:
+                raise ValidationError("amount") from err
+            if not 0 < amount < 1_000_000:
+                raise ValidationError("amount")
+            spendings.append((item, x["date"], amount, str(x.get("note") or "")[:200]))
+        keys = []
+        for k in payload.get("keys") or []:
+            keys.append((visible(k.get("item_id"), own=True), _clean_bank_keys([k.get("key")])))
+        prices = []
+        for p in payload.get("price_changes") or []:
+            item = visible(p.get("item_id"), own=True)
+            _check_date(p.get("from"), "price_changes")
+            try:
+                amount = round(abs(float(p.get("amount"))), 2)
+            except (TypeError, ValueError) as err:
+                raise ValidationError("price_changes") from err
+            prices.append((item, p["from"], amount))
+
+        result = {"confirmed": 0, "spendings": 0, "skipped": 0, "keys": 0, "price_changes": 0}
+        for item, due, actual, amount in confirmations:
+            if any(c["due_date"] == due for c in item.get("confirmations") or []):
+                result["skipped"] += 1
+                continue
+            self.confirm(user_id, item["id"], due, STATUS_BOOKED, actual, amount)
+            result["confirmed"] += 1
+        for item, spent_on, amount, note in spendings:
+            if any(s["date"] == spent_on and s["amount"] == amount for s in item.get("spendings") or []):
+                result["skipped"] += 1
+                continue
+            self.add_spending(user_id, item["id"], spent_on, amount, note)
+            result["spendings"] += 1
+        for item, new in keys:
+            merged = _clean_bank_keys([*(item.get("bank_keys") or []), *new])
+            if merged != (item.get("bank_keys") or []):
+                item["bank_keys"] = merged
+                result["keys"] += 1
+        for item, start, amount in prices:
+            changes = {c["from"]: c for c in item.get("price_changes") or []}
+            changes[start] = {"from": start, "amount": amount}
+            item["price_changes"] = sorted(changes.values(), key=lambda c: c["from"])[-50:]
+            result["price_changes"] += 1
+        return result
 
     def update_spending(
         self,
@@ -667,4 +770,60 @@ def _validate_item(values: dict[str, Any]) -> dict[str, Any]:
         "household_id": values.get("household_id") or None,
         "price_changes": price_changes,
         "contract": contract,
+        "bank_keys": _clean_bank_keys(values.get("bank_keys")),
     }
+
+
+CSV_PROFILE_FIELDS = {
+    "date", "amount", "debit", "credit", "sign", "name", "payer", "purpose", "category",
+    "account", "mandate", "creditor", "counter", "text",
+}
+CSV_PROFILE_FORMATS = {"date": {"dmy", "mdy", "ymd"}, "decimal": {",", "."}}
+
+
+def _clean_csv_profiles(values: Any) -> dict[str, dict[str, Any]]:
+    """Column assignments of bank CSV files the user mapped by hand, keyed by header line."""
+    if values is None:
+        return {}
+    if not isinstance(values, dict):
+        raise ValidationError("csv_profiles")
+    result: dict[str, dict[str, Any]] = {}
+    for signature, profile in list(values.items())[-20:]:
+        if not isinstance(profile, dict):
+            raise ValidationError("csv_profiles")
+        columns = profile.get("columns") or {}
+        if not isinstance(columns, dict):
+            raise ValidationError("csv_profiles")
+        clean: dict[str, Any] = {"columns": {}}
+        for field, index in columns.items():
+            if field not in CSV_PROFILE_FIELDS:
+                raise ValidationError("csv_profiles")
+            try:
+                index = int(index)
+            except (TypeError, ValueError) as err:
+                raise ValidationError("csv_profiles") from err
+            if 0 <= index < 300:
+                clean["columns"][field] = index
+        try:
+            clean["header_row"] = max(0, min(100, int(profile.get("header_row") or 0)))
+        except (TypeError, ValueError) as err:
+            raise ValidationError("csv_profiles") from err
+        for key, allowed in CSV_PROFILE_FORMATS.items():
+            if profile.get(key) in allowed:
+                clean[key] = profile[key]
+        result[str(signature)[:300]] = clean
+    return result
+
+
+def _clean_bank_keys(values: Any) -> list[str]:
+    """Identifiers of bank bookings (creditor + mandate, or payee) of this item."""
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValidationError("bank_keys")
+    keys: list[str] = []
+    for key in values:
+        key = str(key or "").strip()[:120]
+        if key and key not in keys:
+            keys.append(key)
+    return keys[-20:]
