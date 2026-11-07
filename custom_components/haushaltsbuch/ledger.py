@@ -6,11 +6,14 @@ account, purpose]. Only the user who imported them can read them.
 """
 from __future__ import annotations
 
+import math
+import re
 from typing import Any
 
 from .store import ValidationError, _check_date
 
 MAX_ROWS_PER_USER = 50_000
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 FIELDS = ("date", "amount", "name", "main_category", "category", "account", "purpose")
 
 
@@ -24,20 +27,25 @@ class Ledger:
 
     def add(self, user_id: str, rows: list[Any]) -> dict[str, int]:
         """Add transactions; ones already there (same values) are skipped."""
+        if len(rows) > MAX_ROWS_PER_USER:
+            raise ValidationError("too_many_rows")
         cleaned = [_clean_row(r) for r in rows]
-        user = self.data["users"].setdefault(user_id, {"rows": []})
+        user = self.data["users"].get(user_id) or {"rows": []}
         known = {tuple(r) for r in user["rows"]}
-        added = 0
+        new_rows = []
         for row in cleaned:
             key = tuple(row)
             if key in known:
                 continue
             known.add(key)
-            user["rows"].append(row)
-            added += 1
-        if len(user["rows"]) > MAX_ROWS_PER_USER:
+            new_rows.append(row)
+        # Check the limit before anything is changed, so a refused import leaves no rows behind.
+        if len(user["rows"]) + len(new_rows) > MAX_ROWS_PER_USER:
             raise ValidationError("too_many_rows")
+        added = len(new_rows)
+        user["rows"].extend(new_rows)
         user["rows"].sort(key=lambda r: r[0])
+        self.data["users"][user_id] = user
         return {"added": added, "skipped": len(cleaned) - added, "total": len(user["rows"])}
 
     def clear(self, user_id: str) -> int:
@@ -54,9 +62,10 @@ def _clean_row(raw: Any) -> list[Any]:
         amount = round(float(raw.get("amount")), 2)
     except (TypeError, ValueError) as err:
         raise ValidationError("amount") from err
-    if amount == 0 or abs(amount) >= 10_000_000:
+    if not math.isfinite(amount) or amount == 0 or abs(amount) >= 10_000_000:
         raise ValidationError("amount")
-    text = lambda key, size: str(raw.get(key) or "").strip()[:size]  # noqa: E731
+    # Plain text only: control characters are dropped, length is capped.
+    text = lambda key, size: _CONTROL.sub(" ", str(raw.get(key) or "")).strip()[:size]  # noqa: E731
     return [
         raw["date"],
         amount,

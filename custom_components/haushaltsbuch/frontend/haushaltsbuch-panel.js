@@ -294,7 +294,8 @@ function decodeBankBytes(buffer) {
 }
 
 function detectDelimiter(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 40);
+  // Separators inside quoted text ("Miete; Garage") don't count.
+  const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 40).map((l) => l.replace(/"[^"]*"/g, '""'));
   let best = ";";
   let bestScore = -1;
   for (const d of [";", "\t", ",", "|"]) {
@@ -626,8 +627,40 @@ function parseCamt(text) {
 }
 const isCamt = (text) => /<\?xml|<Document/i.test(text.slice(0, 500)) && /BkToCstmr(Stmt|AcctRpt)/.test(text.slice(0, 5000));
 
+// Upper limits so that a broken or manipulated file can't freeze the browser.
+const MAX_BANK_BYTES = 50 * 1024 * 1024;
+const MAX_ZIP_FILES = 100;
+const tooBig = (name) => new Error(tr(`„${name}“ ist zu groß (höchstens 50 MB).`, `“${name}” is too large (50 MB at most).`));
+
+/** Unpack deflated data, stopping as soon as it grows beyond the limit (ZIP bombs). */
+async function inflateCapped(data, name) {
+  const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  const parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BANK_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw tooBig(name);
+    }
+    parts.push(value);
+  }
+  return new Blob(parts).arrayBuffer();
+}
+
 /** The CSV and XML files inside a ZIP (CAMT exports often come zipped). */
 async function unzipBankFiles(buffer) {
+  try {
+    return await readZip(buffer);
+  } catch (err) {
+    if (err instanceof RangeError || err instanceof TypeError) throw new Error(tr("Die ZIP-Datei ist beschädigt.", "The ZIP file is damaged."));
+    throw err;
+  }
+}
+
+async function readZip(buffer) {
   const view = new DataView(buffer);
   let eocd = -1;
   for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 66000); i--) if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
@@ -645,11 +678,12 @@ async function unzipBankFiles(buffer) {
     const name = new TextDecoder().decode(new Uint8Array(buffer, p + 46, nameLen));
     p += 46 + nameLen + extraLen + commentLen;
     if (!/\.(xml|csv|txt)$/i.test(name) || name.startsWith("__MACOSX")) continue;
+    if (files.length >= MAX_ZIP_FILES) break;
     const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
     const data = new Uint8Array(buffer, start, size);
     let bytes;
     if (method === 0) bytes = data.slice().buffer;
-    else if (method === 8) bytes = await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer();
+    else if (method === 8) bytes = await inflateCapped(data, name);
     else continue;
     files.push({ name, text: decodeBankBytes(bytes) });
   }
@@ -660,10 +694,19 @@ async function unzipBankFiles(buffer) {
 async function readBankSources(files) {
   const sources = [];
   for (const f of files) {
+    if (f.size > MAX_BANK_BYTES) throw tooBig(f.name);
     const buffer = await f.arrayBuffer();
     const head = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
     if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4) sources.push(...(await unzipBankFiles(buffer)).map((x) => ({ name: `${f.name}/${x.name}`, text: x.text })));
-    else sources.push({ name: f.name, text: decodeBankBytes(buffer) });
+    else {
+      const text = decodeBankBytes(buffer);
+      // Pictures, PDFs and other binary files: say so instead of guessing columns.
+      const sample = text.slice(0, 4000);
+      if (sample && (sample.match(/[\u0000-\u0008\u000e-\u001f\ufffd]/g) || []).length > sample.length / 20) {
+        throw new Error(tr(`„${f.name}“ ist keine Text- oder CSV-Datei.`, `“${f.name}” is not a text or CSV file.`));
+      }
+      sources.push({ name: f.name, text });
+    }
   }
   return sources;
 }
